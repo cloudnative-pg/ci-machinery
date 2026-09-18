@@ -7,22 +7,24 @@ instead; an owner is added or removed there only to record a vote that
 has already passed, never to make the decision itself.
 -->
 
-`cnpg-template` is one of the CloudNativePG organization-control repositories,
-administered directly by the Steering Committee rather than by a
-subproject maintainer committee.
+`ci-machinery` is a component of the **Supply Chain** subproject of
+CloudNativePG (see `subprojects/supply-chain.md` in
+[cloudnative-pg/governance](https://github.com/cloudnative-pg/governance)).
 
 The people below are its **Component Owners**: they hold `Write` on this
-repository through the `cnpg-template-owners` GitHub team, and are its default
+repository through the `ci-machinery-owners` GitHub team, and are its default
 [`CODEOWNERS`](CODEOWNERS) entry, so every pull request here is routed to
 them for review.
 
 | Name | GitHub Handle | Country |
 | :--- | :--- | :--- |
-| Gabriele Bartolini | [@gbartolini](https://github.com/gbartolini) |  |
-| Francesco Canovai | [@fcanovai](https://github.com/fcanovai) |  |
-| Leonardo Cecchi | [@leonardoce](https://github.com/leonardoce) |  |
-| Marco Nenciarini | [@mnencia](https://github.com/mnencia) |  |
-| Armando Ruocco | [@armru](https://github.com/armru) |  |
+| Gabriele Bartolini | [@gbartolini](https://github.com/gbartolini) | Italy |
+| Francesco Canovai | [@fcanovai](https://github.com/fcanovai) | Italy |
+| Gabriele Fedi | [@GabriFedi97](https://github.com/GabriFedi97) | Italy |
+| Niccolò Fei | [@NiccoloFei](https://github.com/NiccoloFei) | Italy |
+| Tao Li | [@litaocdl](https://github.com/litaocdl) | China |
+| Marco Nenciarini | [@mnencia](https://github.com/mnencia) | Italy |
+
 
 Component Owner is a rung of the CloudNativePG contributor ladder. A new
 owner is added by a ⅔ vote of this repository's existing Component Owners,
