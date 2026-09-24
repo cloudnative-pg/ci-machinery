@@ -1,0 +1,72 @@
+version: 3.53.1
+
+vars:
+  OPERATOR_SDK_IMAGE_VERSION: v1.42.3@sha256:b7378eb179b97fbdf1ff1304e86f62e9ff9f9c2d0089464111ce8eddd39e2013
+
+tasks:
+  bundle:
+    desc: Generate the OLM bundle via operator-sdk
+    summary: |
+      Runs `operator-sdk generate bundle` to produce the
+      OLM bundle, then exports it together with bundle.Dockerfile as a single
+      directory ready for `docker build`.
+
+      Configurable vars:
+        PACKAGE_NAME     Required. Name of the OLM package (--package).
+        SOURCE_DIR       Directory containing the operator source.
+                          Default: "./"
+        INPUT_DIR        Directory containing the rendered manifests
+                          (--input-dir). Default: "olm-manifests"
+        CHANNELS         Comma-separated list of channels the bundle
+                          belongs to (--channels). Default: "stable-v0"
+        DEFAULT_CHANNEL  Channel set as the package's default
+                          (--default-channel). Default: "stable-v0"
+        EXTRA_ARGS       Additional raw arguments appended to
+                          `operator-sdk generate bundle`. Must not set
+                          --package, --input-dir, --channels, --version,
+                          --default-channel, or --output-dir, since those
+                          are already set by this task. Default: ""
+        OUTPUT_DIR       Directory the bundle (manifests/, metadata/,
+                          bundle.Dockerfile) is exported to. Default:
+                          "olm-bundle"
+    vars:
+      SOURCE_DIR: '{{ .SOURCE_DIR | default "./" }}'
+      INPUT_DIR: '{{ .INPUT_DIR | default "olm-manifests" }}'
+      CHANNELS: '{{ .CHANNELS | default "stable-v0" }}'
+      DEFAULT_CHANNEL: '{{ .DEFAULT_CHANNEL | default "stable-v0" }}'
+      EXTRA_ARGS: '{{ .EXTRA_ARGS | default "" }}'
+      OUTPUT_DIR: '{{ .OUTPUT_DIR | default "olm-bundle" }}'
+      GIT_TAG_VERSION:
+        sh: git describe --tags --match 'v*' | sed -e 's/^v//; s/-g[0-9a-f]\+$//; s/-\([0-9]\+\)$/-dev\1/'
+    requires:
+      vars:
+        - name: PACKAGE_NAME
+    dir: '{{ .USER_WORKING_DIR }}/{{ .SOURCE_DIR }}'
+    run: when_changed
+    preconditions:
+      - sh: 'test -d "{{ .INPUT_DIR }}"'
+        msg: "INPUT_DIR '{{ .INPUT_DIR }}' does not exist"
+      - sh: |
+          case "{{ .EXTRA_ARGS }}" in
+            *--package*|*--input-dir*|*--channels*|*--default-channel*|*--output-dir*|*--version*) exit 1 ;;
+          esac
+        msg: "EXTRA_ARGS must not set --package, --input-dir, --channels, --default-channel, --output-dir, or --version"
+    cmds:
+      - >
+        dagger --progress plain core container
+        from --address quay.io/operator-framework/operator-sdk:{{ .OPERATOR_SDK_IMAGE_VERSION }}
+        with-workdir --path /src
+        with-directory --source ./ --path ./
+        with-exec
+        --args='sh,-c,"operator-sdk generate bundle
+        --package={{ .PACKAGE_NAME }}
+        --input-dir={{ .INPUT_DIR }}
+        --channels={{ .CHANNELS }}
+        --default-channel={{ .DEFAULT_CHANNEL }}
+        --version={{ .GIT_TAG_VERSION }}
+        --output-dir=bundle
+        {{ .EXTRA_ARGS }}
+        < /dev/null"'
+        with-exec
+        --args='sh,-c,"mkdir bundle-dist && mv bundle.Dockerfile bundle-dist && mv bundle bundle-dist"'
+        directory --path bundle-dist export --path {{ .OUTPUT_DIR }} --wipe
