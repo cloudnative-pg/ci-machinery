@@ -4,7 +4,7 @@ vars:
   OPERATOR_SDK_IMAGE_VERSION: v1.42.3@sha256:b7378eb179b97fbdf1ff1304e86f62e9ff9f9c2d0089464111ce8eddd39e2013
 
 tasks:
-  bundle:
+  bundle:generate:
     desc: Generate the OLM bundle via operator-sdk
     summary: |
       Runs `operator-sdk generate bundle` to produce the
@@ -30,7 +30,6 @@ tasks:
                           bundle.Dockerfile) is exported to. Default:
                           "olm-bundle"
     vars:
-      SOURCE_DIR: '{{ .SOURCE_DIR | default "./" }}'
       INPUT_DIR: '{{ .INPUT_DIR | default "olm-manifests" }}'
       CHANNELS: '{{ .CHANNELS | default "stable-v0" }}'
       DEFAULT_CHANNEL: '{{ .DEFAULT_CHANNEL | default "stable-v0" }}'
@@ -41,7 +40,7 @@ tasks:
     requires:
       vars:
         - name: PACKAGE_NAME
-    dir: '{{ .USER_WORKING_DIR }}/{{ .SOURCE_DIR }}'
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     run: when_changed
     preconditions:
       - sh: 'test -d "{{ .INPUT_DIR }}"'
@@ -70,3 +69,38 @@ tasks:
         with-exec
         --args='sh,-c,"mkdir bundle-dist && mv bundle.Dockerfile bundle-dist && mv bundle bundle-dist"'
         directory --path bundle-dist export --path {{ .OUTPUT_DIR }} --wipe
+
+  bundle:image:
+    desc: Build the OLM bundle image
+    summary: |
+      Generates the OLM bundle image starting from a bundle directory.
+
+      Configurable vars:
+        IMAGE_NAME           Required. Repository name of the bundle image;
+        BUNDLE_DIR           Directory holding the generated bundle and
+                              bundle.Dockerfile.
+                              Default: "olm-bundle".
+        IMAGE_REGISTRY       Registry the image is tagged for and pushed to.
+                              Default: "localhost:5000".
+        IMAGE_TAG            Tag applied to the bundle image.
+                              Default: "bundle".
+        PLATFORMS            Comma-separated buildx target platforms.
+                              Default: "linux/amd64,linux/arm64".
+    vars:
+      BUNDLE_DIR: '{{ .BUNDLE_DIR | default "olm-bundle" }}'
+      BUNDLE_PACKAGE_NAME: '{{ .BUNDLE_PACKAGE_NAME | default .IMAGE_NAME }}'
+      IMAGE_REGISTRY: '{{ .IMAGE_REGISTRY | default "localhost:5000" }}'
+      IMAGE_TAG: '{{ .IMAGE_TAG | default "bundle" }}'
+      PLATFORMS: '{{ .PLATFORMS | default "linux/amd64,linux/arm64" }}'
+    requires:
+      vars:
+        - name: IMAGE_NAME
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    cmds:
+      - >
+        docker buildx build
+        --platform {{ .PLATFORMS }}
+        --tag {{ .IMAGE_REGISTRY }}/{{ .IMAGE_NAME }}:{{ .IMAGE_TAG }}
+        -f {{ .BUNDLE_DIR }}/bundle.Dockerfile
+        --push
+        {{ .BUNDLE_DIR }}
