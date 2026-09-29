@@ -7,9 +7,10 @@ tasks:
   bundle:
     desc: Generate the OLM bundle via operator-sdk
     summary: |
-      Runs `operator-sdk generate bundle` to produce the
-      OLM bundle, then exports it together with bundle.Dockerfile as a single
-      directory ready for `docker build`.
+      Runs `operator-sdk generate bundle` to produce the OLM bundle,
+      then exports it together with bundle.Dockerfile as a single
+      directory ready for `docker build`. This task requires the
+      OLM manifest to be available in the project's INPUT_DIR.
 
       Configurable vars:
         PACKAGE_NAME     Required. Name of the OLM package (--package).
