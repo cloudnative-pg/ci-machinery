@@ -1,3 +1,5 @@
+version: 3.53.1
+
 vars:
   BUILDER_NAME: cnpg-builder
   REGISTRY_CERT_VOLUME: certs-cnpg
@@ -30,8 +32,8 @@ tasks:
         echo extendedKeyUsage = serverAuth >> extfile.cnf &&
         openssl x509 -req -days 365 -sha256 -in server.csr -CA ca.pem -CAkey ca-key.pem \
             -CAcreateserial -out server-cert.pem -extfile extfile.cnf'
-        docker cp certs-klio:/certs/ca.pem certs/ca.pem &&
-        docker rm certs-klio
+        docker cp certs-cnpg:/certs/ca.pem certs/ca.pem &&
+        docker rm certs-cnpg
     status:
       - docker volume inspect {{ .REGISTRY_CERT_VOLUME }}
       - test -f certs/ca.pem
@@ -77,3 +79,29 @@ tasks:
       - docker network connect {{ .REGISTRY_NETWORK }} {{ .REGISTRY_NAME }} || true
     status:
       - docker network inspect {{ .REGISTRY_NETWORK }} -f '{{ range .Containers }}{{ .Name }} {{ end }}' | grep "{{ .REGISTRY_NAME }}"
+
+  create-builder:
+    desc: Create a buildx builder
+    internal: true
+    run: once
+    deps:
+      - start-build-network
+    cmds:
+      - docker buildx create --name {{ .BUILDER_NAME }} --driver-opt "network={{ .REGISTRY_NETWORK }}"
+    status:
+      - docker buildx inspect {{ .BUILDER_NAME }}
+
+
+  setup-builder:
+    desc: Create registry and docker builder sharing the same network
+    summary: |
+      Setup the local container registry and the docker builder sharing the same docker network
+    run: once
+    deps:
+      - generate-certs
+      - start-build-network
+      - start-registry
+      - registry-network-connect
+      - create-builder
+    cmds:
+      - echo "Setup registry and builder"
