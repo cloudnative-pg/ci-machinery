@@ -1,0 +1,81 @@
+version: 3.53.1
+
+vars:
+  BUILDER_NAME: cnpg-builder
+  REGISTRY_CERT_VOLUME: certs-cnpg
+  REGISTRY_NETWORK: cnpg
+  REGISTRY_NAME: '{{ .REGISTRY_NAME | default "registry.dev" }}'
+  REGISTRY_PORT: '{{ .REGISTRY_PORT | default 5000 }}'
+  # GitHub org/user that owns the ghcr.io namespace CI pushes images to.
+  # GITHUB_REPOSITORY_OWNER is set by GitHub Actions to whichever repo the
+  # workflow is actually running in, so a fork's own CI pushes to the fork's
+  # namespace instead of failing against cloudnative-pg's, which the fork has
+  # no write access to.
+  REGISTRY_OWNER: '{{ .REGISTRY_OWNER | default .GITHUB_REPOSITORY_OWNER | default "cloudnative-pg" | lower }}'
+
+tasks:
+  generate-certs:
+    desc: Generate certificates for the local registry
+    run: once
+    internal: true
+    cmds:
+      - >
+        mkdir -p certs &&
+        docker volume create {{ .REGISTRY_CERT_VOLUME }} &&
+        docker run -v {{ .REGISTRY_CERT_VOLUME }}:/certs -w /certs --name certs-cnpg --entrypoint=/bin/sh alpine/openssl -c '
+        openssl genrsa -out ca-key.pem 4096 &&
+        openssl req -new -x509 -days 365 -key ca-key.pem -sha256 -out ca.pem \
+            -subj "/O=CloudNativePG/OU=Barman Cloud Plugin Testing" &&
+        openssl genrsa -out server-key.pem 4096 &&
+        openssl req -subj "/CN={{ .REGISTRY_NAME }}" -sha256 -new -key server-key.pem -out server.csr &&
+        echo subjectAltName = DNS:{{ .REGISTRY_NAME }},IP:127.0.0.1 >> extfile.cnf &&
+        echo extendedKeyUsage = serverAuth >> extfile.cnf &&
+        openssl x509 -req -days 365 -sha256 -in server.csr -CA ca.pem -CAkey ca-key.pem \
+            -CAcreateserial -out server-cert.pem -extfile extfile.cnf'
+        docker cp certs-klio:/certs/ca.pem certs/ca.pem &&
+        docker rm certs-klio
+    status:
+      - docker volume inspect {{ .REGISTRY_CERT_VOLUME }}
+      - test -f certs/ca.pem
+
+  start-build-network:
+      desc: Create a docker network for image building used by the dagger engine and the registry
+      internal: true
+      run: once
+      cmds:
+        - docker network create {{ .REGISTRY_NETWORK}}
+      status:
+        - docker network inspect {{ .REGISTRY_NETWORK }}
+
+  start-registry:
+    desc: Start a container registry
+    internal: true
+    run: once
+    deps:
+      - generate-certs
+      - start-build-network
+    env:
+      # renovate: datasource=docker depName=registry versioning=docker
+      REGISTRY_VERSION: 3.1.1@sha256:fd374bae807c225661adfe2c0c1f9970a0b8fab1761fd7dfb91e0fd9a8748f9b
+    cmds:
+      - >
+        docker run -d --name {{ .REGISTRY_NAME }}
+        --network {{ .REGISTRY_NETWORK }}
+        -v {{ .REGISTRY_CERT_VOLUME }}:/certs
+        -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/server-cert.pem -e REGISTRY_HTTP_TLS_KEY=/certs/server-key.pem
+        registry:${REGISTRY_VERSION}
+    status:
+      - \[ "$(docker inspect -f {{`'{{.State.Running}}'`}} "{{ .REGISTRY_NAME }}" 2> /dev/null)" == 'true' \]
+
+  registry-network-connect:
+    desc: Make sure the registry is connected to the registry network
+    summary: If we started the registry on our own, it should already be connected. However, if the registry was started
+      somewhere else, it may not be on the expected network.
+    internal: true
+    deps:
+      - start-registry
+    run: once
+    cmds:
+      - docker network connect {{ .REGISTRY_NETWORK }} {{ .REGISTRY_NAME }} || true
+    status:
+      - docker network inspect {{ .REGISTRY_NETWORK }} -f '{{ range .Containers }}{{ .Name }} {{ end }}' | grep "{{ .REGISTRY_NAME }}"
