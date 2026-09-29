@@ -81,3 +81,29 @@ tasks:
       - docker network rm {{ .REGISTRY_NETWORK }}
     status:
       - "! docker network inspect {{ .REGISTRY_NETWORK }} >/dev/null 2>&1"
+
+  create-builder:
+    desc: Create a buildx builder
+    internal: true
+    run: once
+    deps:
+      - start-build-network
+    cmds:
+      - docker buildx create --name {{ .BUILDER_NAME }} --driver-opt "network={{ .REGISTRY_NETWORK }}"
+    status:
+      - docker buildx inspect {{ .BUILDER_NAME }}
+
+
+  setup-builder:
+    desc: Create registry and docker builder sharing the same network
+    summary: |
+      Setup the local container registry and the docker builder sharing the same docker network
+    run: once
+    deps:
+      - generate-certs
+      - start-build-network
+      - start-registry
+      - registry-network-connect
+      - create-builder
+    cmds:
+      - echo "Setup registry and builder"
