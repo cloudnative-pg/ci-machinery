@@ -38,7 +38,7 @@ tasks:
       EXTRA_ARGS: '{{ .EXTRA_ARGS | default "" }}'
       OUTPUT_DIR: '{{ .OUTPUT_DIR | default "olm-bundle" }}'
       GIT_TAG_VERSION:
-        sh: git describe --tags --match 'v*' | sed -e 's/^v//; s/-g[0-9a-f]\+$//; s/-\([0-9]\+\)$/-dev\1/'
+        sh: set -o pipefail && git describe --tags --match 'v*' | sed -e 's/^v//; s/-g[0-9a-f]\+$//; s/-\([0-9]\+\)$/-dev\1/'
     requires:
       vars:
         - name: PACKAGE_NAME
@@ -59,15 +59,8 @@ tasks:
         with-workdir --path /src
         with-directory --source ./ --path ./
         with-exec
-        --args='sh,-c,"operator-sdk generate bundle
-        --package={{ .PACKAGE_NAME }}
-        --input-dir={{ .INPUT_DIR }}
-        --channels={{ .CHANNELS }}
-        --default-channel={{ .DEFAULT_CHANNEL }}
-        --version={{ .GIT_TAG_VERSION }}
-        --output-dir=bundle
-        {{ .EXTRA_ARGS }}
-        < /dev/null"'
+        --args=sh --args=-c
+        --args={{ printf "operator-sdk generate bundle --package=%s --input-dir=%s --channels=%s --default-channel=%s --version=%s --output-dir=bundle %s < /dev/null" (.PACKAGE_NAME | shellQuote) (.INPUT_DIR | shellQuote) (.CHANNELS | shellQuote) (.DEFAULT_CHANNEL | shellQuote) (.GIT_TAG_VERSION | shellQuote) .EXTRA_ARGS | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
         with-exec
-        --args='sh,-c,"mkdir bundle-dist && mv bundle.Dockerfile bundle-dist && mv bundle bundle-dist"'
-        directory --path bundle-dist export --path {{ .OUTPUT_DIR }} --wipe
+        --args=sh --args=-c --args='mkdir bundle-dist && mv bundle.Dockerfile bundle-dist && mv bundle bundle-dist'
+        directory --path bundle-dist export --path {{ .OUTPUT_DIR | shellQuote }} --wipe
