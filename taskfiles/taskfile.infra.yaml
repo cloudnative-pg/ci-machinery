@@ -19,6 +19,7 @@ tasks:
     run: once
     internal: true
     cmds:
+      - docker rm -f certs-cnpg 2> /dev/null || true
       - >
         mkdir -p certs &&
         docker volume create {{ .REGISTRY_CERT_VOLUME }} &&
@@ -58,6 +59,8 @@ tasks:
       # renovate: datasource=docker depName=registry versioning=docker
       REGISTRY_VERSION: 3.1.1@sha256:fd374bae807c225661adfe2c0c1f9970a0b8fab1761fd7dfb91e0fd9a8748f9b
     cmds:
+      # status only passes for a running container, so clear any stopped one that would block the name
+      - docker rm -f {{ .REGISTRY_NAME }} 2> /dev/null || true
       - >
         docker run -d --name {{ .REGISTRY_NAME }}
         --network {{ .REGISTRY_NETWORK }}
