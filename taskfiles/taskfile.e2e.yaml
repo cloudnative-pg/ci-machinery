@@ -1,0 +1,232 @@
+version: 3
+
+tasks:
+  git:clone:
+    internal: true
+    requires:
+      vars: [REPO, REF, DEST]
+    dir: "{{ .WORKDIR | default .USER_WORKING_DIR }}"
+    preconditions:
+      - sh: 'case "{{ .DEST }}" in /*|.|./|..|../*|*/..|*/../*) exit 1;; esac'
+        msg: "DEST '{{ .DEST }}' must be a relative path inside WORKDIR"
+      - sh: '[ ! -e "{{ .DEST }}" ]'
+        msg: "DEST '{{ .DEST }}' already exists; remove it or pass SOURCE_DIR"
+    cmds:
+      - git clone --quiet --filter=blob:none --no-checkout "{{ .REPO }}" "{{ .DEST }}"
+      - git -C "{{ .DEST }}" checkout --quiet "{{ .REF }}"
+
+  kind:create:
+    desc: Create a kind cluster and a local registry via cloudnative-pg's setup-cluster.sh
+    summary: |
+      Configurable vars:
+        CNPG_DIR      Required. A cloudnative-pg source tree; its
+                      hack/setup-cluster.sh creates the cluster.
+        CLUSTER_NAME  Required. Name of the kind cluster.
+        K8S_VERSION   Kubernetes version of the kind nodes, e.g. "v1.35.0".
+                      Default: the tree's own default.
+        NODES         Number of nodes. Default: the tree's own default (3).
+    if: '{{ ne .USE_EXISTING_ENV "true" }}'
+    dir: "{{ .WORKDIR | default .USER_WORKING_DIR }}"
+    preconditions:
+      - sh: '[ -n "{{ .CLUSTER_NAME }}" ]'
+        msg: "CLUSTER_NAME is required"
+      - sh: 'test -x "{{ .CNPG_DIR }}/hack/setup-cluster.sh"'
+        msg: "CNPG_DIR '{{ .CNPG_DIR }}' has no hack/setup-cluster.sh"
+    env:
+      CLUSTER_NAME: "{{ .CLUSTER_NAME }}"
+      K8S_VERSION: "{{ .K8S_VERSION }}"
+      NODES: "{{ .NODES }}"
+    cmds:
+      - "{{ .CNPG_DIR }}/hack/setup-cluster.sh create"
+
+  cnpg:deploy:
+    desc: Deploy the cloudnative-pg operator into the kind cluster
+    summary: |
+      Configurable vars:
+        CNPG_DIR            Required. The cloudnative-pg source tree whose
+                            manifests are deployed.
+        CLUSTER_NAME        Required. Name of the kind cluster.
+        CONTROLLER_IMG      Operator image to deploy. When empty, the tree's
+                            own `make docker-build` builds one and loads it.
+                            Default: ""
+        TEST_UPGRADE_TO_V1  When "true" and CONTROLLER_IMG is empty, also
+                            builds the -prime image the upgrade specs need.
+                            Default: "false"
+    requires:
+      vars: [CNPG_DIR, CLUSTER_NAME]
+    dir: "{{ .WORKDIR | default .USER_WORKING_DIR }}"
+    env:
+      CLUSTER_NAME: "{{ .CLUSTER_NAME }}"
+      CLUSTER_ENGINE: kind
+      TEST_UPGRADE_TO_V1: '{{ .TEST_UPGRADE_TO_V1 | default "false" }}'
+      CONTROLLER_IMG: "{{ .CONTROLLER_IMG }}"
+    cmds:
+      # The build path runs goreleaser, which reads TARGET as its build filter;
+      # a caller exporting TARGET for its own purposes would leave dist/ empty.
+      - "env -u TARGET {{ .CNPG_DIR }}/hack/setup-cluster.sh {{ if .CONTROLLER_IMG }}deploy{{ else }}load deploy{{ end }}"
+
+  diagnostics:dump:
+    desc: Dump pods, events and the logs of every non-running pod
+    summary: |
+      Configurable vars:
+        LOGS_DIR  Required. Directory the diagnostics are written to.
+    requires:
+      vars: [LOGS_DIR]
+    dir: "{{ .WORKDIR | default .USER_WORKING_DIR }}"
+    cmds:
+      - |
+        mkdir -p {{ .LOGS_DIR }}
+        kubectl get pods -A -o wide > {{ .LOGS_DIR }}/pods.txt 2>&1 || true
+        kubectl get events -A --sort-by=.lastTimestamp > {{ .LOGS_DIR }}/events.txt 2>&1 || true
+        kubectl get pods -A --no-headers 2>/dev/null | awk '$4 != "Running" && $4 != "Completed" { print $1" "$2 }' | while read -r ns pod; do
+          kubectl -n "$ns" describe pod "$pod" > "{{ .LOGS_DIR }}/$ns--$pod.describe" 2>&1 || true
+          kubectl -n "$ns" logs "$pod" --all-containers > "{{ .LOGS_DIR }}/$ns--$pod.log" 2>&1 || true
+          kubectl -n "$ns" logs "$pod" --all-containers --previous > "{{ .LOGS_DIR }}/$ns--$pod.prev.log" 2>&1 || true
+        done
+
+  cnpg:e2e:
+    desc: Run cloudnative-pg's e2e suite against a supplied operator image
+    summary: |
+      Deploys CONTROLLER_IMG from SOURCE_DIR's manifests and runs that tree's
+      hack/e2e/run-e2e.sh. The cluster must exist (kind:create) and the
+      image must be pullable from it.
+
+      Configurable vars:
+        SOURCE_DIR                        The cloudnative-pg tree the image was
+                                          built from. Default: a clone of REF.
+        REF                               Branch, tag or sha to clone when
+                                          SOURCE_DIR is empty. Mutually
+                                          exclusive with SOURCE_DIR.
+                                          Default: "main"
+        CLUSTER_NAME                      Required. Name of the kind cluster.
+        CONTROLLER_IMG                    Required. Operator image under test.
+        LOGS_DIR                          Required. Where suite output,
+                                          operator log and diagnostics go.
+        FEATURE_TYPE                      Comma-separated ginkgo labels.
+                                          Default: "smoke,basic,security,service-connectivity"
+        TEST_UPGRADE_TO_V1                Run the upgrade specs too. Needs a
+                                          <CONTROLLER_IMG>-prime image pullable
+                                          from the cluster. Default: "false"
+        POSTGRES_IMG                      Operand image the specs create
+                                          Clusters with. Default: the tree's
+                                          pkg/versions default.
+        PGBOUNCER_IMG                     PgBouncer image for the pooler specs.
+                                          Default: the tree's pkg/versions default.
+        TEST_CLOUD_VENDOR                 Default: "kind"
+        E2E_DEFAULT_STORAGE_CLASS         Default: "standard"
+        E2E_CSI_STORAGE_CLASS             Default: "csi-hostpath-sc"
+        E2E_DEFAULT_VOLUMESNAPSHOT_CLASS  Default: "csi-hostpath-snapclass"
+    requires:
+      vars: [CLUSTER_NAME, CONTROLLER_IMG, LOGS_DIR]
+    dir: "{{ .WORKDIR | default .USER_WORKING_DIR }}"
+    vars:
+      TEST_UPGRADE_TO_V1: '{{ .TEST_UPGRADE_TO_V1 | default "false" }}'
+      SRC: '{{ .SOURCE_DIR | default (printf "_e2e_src/cloudnative-pg/%s" (.REF | default "main" | replace "/" "-")) }}'
+    # What upstream's run-e2e-local.sh would export. CLUSTER_NAME and
+    # CLUSTER_ENGINE are read under `set -u` with no default; the three storage
+    # classes are what makes the suite configure a storage section at all.
+    env:
+      CLUSTER_NAME: "{{ .CLUSTER_NAME }}"
+      CLUSTER_ENGINE: kind
+      TEST_CLOUD_VENDOR: '{{ .TEST_CLOUD_VENDOR | default "kind" }}'
+      E2E_DEFAULT_STORAGE_CLASS: '{{ .E2E_DEFAULT_STORAGE_CLASS | default "standard" }}'
+      E2E_CSI_STORAGE_CLASS: '{{ .E2E_CSI_STORAGE_CLASS | default "csi-hostpath-sc" }}'
+      E2E_DEFAULT_VOLUMESNAPSHOT_CLASS: '{{ .E2E_DEFAULT_VOLUMESNAPSHOT_CLASS | default "csi-hostpath-snapclass" }}'
+      FEATURE_TYPE: '{{ .FEATURE_TYPE | default "smoke,basic,security,service-connectivity" }}'
+      TEST_UPGRADE_TO_V1: "{{ .TEST_UPGRADE_TO_V1 }}"
+      CONTROLLER_IMG: "{{ .CONTROLLER_IMG }}"
+      POSTGRES_IMG: "{{ .POSTGRES_IMG }}"
+      PGBOUNCER_IMG: "{{ .PGBOUNCER_IMG }}"
+    preconditions:
+      - sh: '[ -z "{{ .SOURCE_DIR }}" ] || [ -z "{{ .REF }}" ]'
+        msg: "SOURCE_DIR and REF are mutually exclusive"
+      - sh: '[ -z "{{ .SOURCE_DIR }}" ] || test -x "{{ .SOURCE_DIR }}/hack/e2e/run-e2e.sh"'
+        msg: "SOURCE_DIR '{{ .SOURCE_DIR }}' has no hack/e2e/run-e2e.sh"
+    cmds:
+      - task: git:clone
+        if: "{{ not .SOURCE_DIR }}"
+        vars:
+          WORKDIR: "{{ .WORKDIR }}"
+          REPO: https://github.com/cloudnative-pg/cloudnative-pg.git
+          REF: '{{ .REF | default "main" }}'
+          DEST: "{{ .SRC }}"
+      - task: cnpg:deploy
+        vars:
+          WORKDIR: "{{ .WORKDIR }}"
+          CNPG_DIR: "{{ .SRC }}"
+          CLUSTER_NAME: "{{ .CLUSTER_NAME }}"
+          CONTROLLER_IMG: "{{ .CONTROLLER_IMG }}"
+          TEST_UPGRADE_TO_V1: "{{ .TEST_UPGRADE_TO_V1 }}"
+      - defer: |
+          mkdir -p {{ .LOGS_DIR }}
+          [ -d {{ .SRC }}/tests/e2e/out ] && cp -a {{ .SRC }}/tests/e2e/out/. {{ .LOGS_DIR }}/ || true
+          kubectl -n cnpg-system logs deploy/cnpg-controller-manager --tail=2000 > {{ .LOGS_DIR }}/operator.log 2>&1 || true
+      - defer:
+          task: diagnostics:dump
+          vars:
+            WORKDIR: "{{ .WORKDIR }}"
+            LOGS_DIR: "{{ .LOGS_DIR }}"
+      - cd {{ .SRC }} && ./hack/e2e/run-e2e.sh
+
+  klio:e2e:
+    desc: Run klio's e2e suite against a supplied operator image
+    summary: |
+      Runs SOURCE_DIR's own `task integration:e2e` against OPERATOR_IMAGE.
+      klio's specs create CNPG Clusters, so a cloudnative-pg operator must
+      already be running in the cluster (cnpg:deploy); which one is the
+      caller's choice.
+
+      Configurable vars:
+        SOURCE_DIR      The klio tree the image was built from.
+                        Default: a clone of REF.
+        REF             Branch, tag or sha to clone when SOURCE_DIR is
+                        empty. Mutually exclusive with SOURCE_DIR.
+                        Default: "main"
+        CLUSTER_NAME    Required. Name of the kind cluster.
+        OPERATOR_IMAGE  Required. Operator image under test, as
+                        <repository>:<tag>.
+        LOGS_DIR        Required. Where suite output, operator log and
+                        diagnostics go.
+        OPERAND_IMAGE   klio server image, as <repository>:<tag>. Used as
+                        the operator's sidecar and as the specs'
+                        serverImage. Default: the snapshot klio builds.
+        STORAGE_CLASS   Storage class for every PVC the specs create.
+                        Default: "csi-hostpath-sc"
+    requires:
+      vars: [CLUSTER_NAME, OPERATOR_IMAGE, LOGS_DIR]
+    dir: "{{ .WORKDIR | default .USER_WORKING_DIR }}"
+    vars:
+      SRC: '{{ .SOURCE_DIR | default (printf "_e2e_src/klio/%s" (.REF | default "main" | replace "/" "-")) }}'
+      E2E_CONFIG_DIR: "{{ .SRC }}/operator/test/e2e"
+      STORAGE_CLASS: '{{ .STORAGE_CLASS | default "csi-hostpath-sc" }}'
+    preconditions:
+      - sh: '[ -z "{{ .SOURCE_DIR }}" ] || [ -z "{{ .REF }}" ]'
+        msg: "SOURCE_DIR and REF are mutually exclusive"
+    cmds:
+      - task: git:clone
+        if: "{{ not .SOURCE_DIR }}"
+        vars:
+          WORKDIR: "{{ .WORKDIR }}"
+          REPO: https://github.com/cloudnative-pg/klio.git
+          REF: '{{ .REF | default "main" }}'
+          DEST: "{{ .SRC }}"
+      - >
+        sed -e 's|^storageClass: .*|storageClass: "{{ .STORAGE_CLASS }}"|'
+        {{ if .OPERAND_IMAGE }}-e 's|^serverImage: .*|serverImage: "{{ .OPERAND_IMAGE }}"|'{{ end }}
+        {{ .E2E_CONFIG_DIR }}/e2e-config.yaml.example > {{ .E2E_CONFIG_DIR }}/e2e-config.yaml
+      - defer: |
+          mkdir -p {{ .LOGS_DIR }}
+          [ -d {{ .SRC }}/e2e_cluster_logs ] && cp -a {{ .SRC }}/e2e_cluster_logs/. {{ .LOGS_DIR }}/ || true
+          kubectl -n cnpg-system logs deploy/klio-controller-manager --tail=2000 > {{ .LOGS_DIR }}/klio-operator.log 2>&1 || true
+      - defer:
+          task: diagnostics:dump
+          vars:
+            WORKDIR: "{{ .WORKDIR }}"
+            LOGS_DIR: "{{ .LOGS_DIR }}"
+      - >
+        task -t {{ .SRC }}/Taskfile.yml -d {{ .SRC }} integration:e2e
+        KIND_CLUSTER_NAME={{ .CLUSTER_NAME }}
+        OPERATOR_IMAGE_REPOSITORY={{ regexReplaceAll ":[^:/]+$" .OPERATOR_IMAGE "" }}
+        OPERATOR_IMAGE_TAG={{ regexReplaceAll "^.*:" .OPERATOR_IMAGE "" }}
+        {{ if .OPERAND_IMAGE }}OPERAND_IMAGE_REPOSITORY={{ regexReplaceAll ":[^:/]+$" .OPERAND_IMAGE "" }}
+        OPERAND_IMAGE_TAG={{ regexReplaceAll "^.*:" .OPERAND_IMAGE "" }}{{ end }}
