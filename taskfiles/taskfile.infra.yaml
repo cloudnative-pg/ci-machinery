@@ -31,9 +31,9 @@ tasks:
         echo subjectAltName = DNS:{{ .REGISTRY_NAME }},IP:127.0.0.1 >> extfile.cnf &&
         echo extendedKeyUsage = serverAuth >> extfile.cnf &&
         openssl x509 -req -days 365 -sha256 -in server.csr -CA ca.pem -CAkey ca-key.pem \
-            -CAcreateserial -out server-cert.pem -extfile extfile.cnf'
-        docker cp certs-klio:/certs/ca.pem certs/ca.pem &&
-        docker rm certs-klio
+            -CAcreateserial -out server-cert.pem -extfile extfile.cnf' &&
+        docker cp certs-cnpg:/certs/ca.pem certs/ca.pem &&
+        docker rm certs-cnpg
     status:
       - docker volume inspect {{ .REGISTRY_CERT_VOLUME }}
       - test -f certs/ca.pem
