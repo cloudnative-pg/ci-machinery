@@ -9,8 +9,11 @@ tasks:
     summary: |
       Runs `operator-sdk generate bundle` to produce the OLM bundle,
       then exports it together with bundle.Dockerfile as a single
-      directory ready for `docker build`. This task requires the
-      OLM manifest to be available in the project's INPUT_DIR.
+      directory ready for `docker build`.
+      This task requires the rendered OLM manifest to be available in
+      the project's INPUT_DIR. It must not be confused with the plain
+      olm manifest directory of the source project, which only contains
+      the CSV.
 
       Configurable vars:
         PACKAGE_NAME     Required. Name of the OLM package (--package).
@@ -60,7 +63,7 @@ tasks:
         with-directory --source ./ --path ./
         with-exec
         --args=sh --args=-c
-        --args={{ printf "operator-sdk generate bundle --package=%s --input-dir=%s --channels=%s --default-channel=%s --version=%s --output-dir=bundle %s < /dev/null" (.PACKAGE_NAME | shellQuote) (.INPUT_DIR | shellQuote) (.CHANNELS | shellQuote) (.DEFAULT_CHANNEL | shellQuote) (.GIT_TAG_VERSION | shellQuote) .EXTRA_ARGS | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
+        --args={{ printf "rm -rf bundle bundle.Dockerfile && operator-sdk generate bundle --package=%s --input-dir=%s --channels=%s --default-channel=%s --version=%s --output-dir=bundle %s < /dev/null" (.PACKAGE_NAME | shellQuote) (.INPUT_DIR | shellQuote) (.CHANNELS | shellQuote) (.DEFAULT_CHANNEL | shellQuote) (.GIT_TAG_VERSION | shellQuote) .EXTRA_ARGS | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
         with-exec
         --args=sh --args=-c --args='mkdir bundle-dist && mv bundle.Dockerfile bundle-dist && mv bundle bundle-dist'
         directory --path bundle-dist export --path {{ .OUTPUT_DIR | shellQuote }} --wipe
