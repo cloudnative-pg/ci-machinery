@@ -29,5 +29,8 @@
 # Go workspace file
 go.work
 
+# generated local registry CA
+certs/
+
 # go-task local state
 .task/
