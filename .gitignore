@@ -28,3 +28,6 @@
 
 # Go workspace file
 go.work
+
+# go-task local state
+.task/
