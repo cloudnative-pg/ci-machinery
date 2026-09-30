@@ -31,7 +31,7 @@ tasks:
         echo subjectAltName = DNS:{{ .REGISTRY_NAME }},IP:127.0.0.1 >> extfile.cnf &&
         echo extendedKeyUsage = serverAuth >> extfile.cnf &&
         openssl x509 -req -days 365 -sha256 -in server.csr -CA ca.pem -CAkey ca-key.pem \
-            -CAcreateserial -out server-cert.pem -extfile extfile.cnf'
+            -CAcreateserial -out server-cert.pem -extfile extfile.cnf' &&
         docker cp certs-cnpg:/certs/ca.pem certs/ca.pem &&
         docker rm certs-cnpg
     status:
@@ -98,9 +98,6 @@ tasks:
       Setup the local container registry and the docker builder sharing the same docker network
     run: once
     deps:
-      - generate-certs
-      - start-build-network
-      - start-registry
       - registry-network-connect
       - create-builder
     cmds:
