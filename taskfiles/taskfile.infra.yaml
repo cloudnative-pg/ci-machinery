@@ -1,0 +1,82 @@
+version: 3.53.1
+
+vars:
+  REGISTRY_NETWORK: cnpg
+  REGISTRY_NAME: '{{ .REGISTRY_NAME | default "registry.cnpg" }}'
+  REGISTRY_HOST_PORT: '{{ .REGISTRY_HOST_PORT | default 5000 }}'
+  REGISTRY_INTERNAL_PORT: 5000
+  REGISTRY_CA_VOLUME: cnpg-registry-tls
+
+tasks:
+  generate-certs:
+    desc: Generate certificates for the local registry
+    run: once
+    internal: true
+    cmds:
+      - docker volume create {{ .REGISTRY_CA_VOLUME }}
+      - >
+        docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs -w /certs --entrypoint=/bin/sh alpine/openssl -c '
+        openssl genrsa -out ca-key.pem 4096 &&
+        openssl req -new -x509 -days 365 -key ca-key.pem -sha256 -out ca.pem \
+            -subj "/O=CloudNativePG/OU=CNPG Testing" &&
+        openssl genrsa -out server-key.pem 4096 &&
+        openssl req -subj "/CN={{ .REGISTRY_NAME }}" -sha256 -new -key server-key.pem -out server.csr &&
+        echo subjectAltName = DNS:{{ .REGISTRY_NAME }},IP:127.0.0.1 >> extfile.cnf &&
+        echo extendedKeyUsage = serverAuth >> extfile.cnf &&
+        openssl x509 -req -days 365 -sha256 -in server.csr -CA ca.pem -CAkey ca-key.pem \
+            -CAcreateserial -out server-cert.pem -extfile extfile.cnf'
+    status:
+      - docker volume inspect {{ .REGISTRY_CA_VOLUME }}
+
+  setup-docker-network:
+    desc: Setup Docker network to connect all the services
+    run: once
+    cmds:
+      - docker network create {{ .REGISTRY_NETWORK }}
+    status:
+      - docker network inspect {{ .REGISTRY_NETWORK }}
+
+  setup-container-registry:
+    desc: Setup a local container registry
+    run: once
+    deps:
+      - generate-certs
+      - setup-docker-network
+    env:
+      # renovate: datasource=docker depName=registry versioning=docker
+      REGISTRY_VERSION: 3.1.1@sha256:fd374bae807c225661adfe2c0c1f9970a0b8fab1761fd7dfb91e0fd9a8748f9b
+    cmds:
+      - >
+        docker run -d --name {{ .REGISTRY_NAME }}
+        --network {{ .REGISTRY_NETWORK }}
+        -v {{ .REGISTRY_CA_VOLUME }}:/certs
+        -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/server-cert.pem -e REGISTRY_HTTP_TLS_KEY=/certs/server-key.pem
+        -p {{ .REGISTRY_HOST_PORT }}:{{ .REGISTRY_INTERNAL_PORT }}
+        registry:${REGISTRY_VERSION}
+    status:
+      - \[ "$(docker inspect -f {{`'{{.State.Running}}'`}} "{{ .REGISTRY_NAME }}" 2> /dev/null)" == 'true' \]
+
+  teardown:
+    desc: Teardown the resources created by the tasks
+    silent: true
+    cmds:
+      - task: teardown-container-registry
+      - task: teardown-docker-network
+
+  teardown-container-registry:
+    desc: Stop the local Docker registry if running
+    silent: true
+    cmds:
+      - docker rm -fv {{ .REGISTRY_NAME }}
+      - docker volume rm -f {{ .REGISTRY_CA_VOLUME }}
+    status:
+      - "! docker container inspect {{ .REGISTRY_NAME }} >/dev/null 2>&1"
+      - "! docker volume inspect {{ .REGISTRY_CA_VOLUME }} >/dev/null 2>&1"
+
+  teardown-docker-network:
+    desc: Remove the Docker network if present
+    silent: true
+    cmds:
+      - docker network rm {{ .REGISTRY_NETWORK }}
+    status:
+      - "! docker network inspect {{ .REGISTRY_NETWORK }} >/dev/null 2>&1"

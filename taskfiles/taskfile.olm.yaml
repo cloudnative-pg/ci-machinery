@@ -2,6 +2,10 @@ version: 3.53.1
 
 vars:
   OPERATOR_SDK_IMAGE_VERSION: v1.42.3@sha256:b7378eb179b97fbdf1ff1304e86f62e9ff9f9c2d0089464111ce8eddd39e2013
+  REGISTRY_CA_VOLUME: '{{ .REGISTRY_CA_VOLUME | default "cnpg-registry-tls" }}'
+  REGISTRY_CA_PEM:
+    sh: docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs busybox cat /certs/ca.pem 2>/dev/null || true
+  RHEL_CA_TRUST_STEP: '{{ if .REGISTRY_CA_PEM }}with-new-file --path /etc/pki/ca-trust/source/anchors/registry-ca.crt --contents={{ .REGISTRY_CA_PEM | shellQuote }} with-exec --args update-ca-trust{{ end }}'
 
 tasks:
   bundle:
@@ -61,6 +65,7 @@ tasks:
         from --address quay.io/operator-framework/operator-sdk:{{ .OPERATOR_SDK_IMAGE_VERSION }}
         with-workdir --path /src
         with-directory --source ./ --path ./
+        {{ .RHEL_CA_TRUST_STEP }}
         with-exec
         --args=sh --args=-c
         --args={{ printf "rm -rf bundle bundle.Dockerfile && operator-sdk generate bundle --package=%s --input-dir=%s --channels=%s --default-channel=%s --version=%s --output-dir=bundle %s < /dev/null" (.PACKAGE_NAME | shellQuote) (.INPUT_DIR | shellQuote) (.CHANNELS | shellQuote) (.DEFAULT_CHANNEL | shellQuote) (.GIT_TAG_VERSION | shellQuote) .EXTRA_ARGS | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
