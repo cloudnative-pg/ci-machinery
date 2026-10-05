@@ -10,16 +10,12 @@
     ":automergeDigest"
   ],
   "enabled": true,
-  "prConcurrentLimit": 5,
-  "ignorePaths": [
-    "**/node_modules/**",
-    "**/bower_components/**",
-    "**/vendor/**",
-    "**/examples/**",
-    "**/__tests__/**",
-    "**/tests/**",
-    "**/__fixtures__/**"
+  "enabledManagers": [
+    "github-actions",
+    "custom.regex"
   ],
+  "prConcurrentLimit": 5,
+  "ignorePaths": [],
   "semanticCommits": "enabled",
   "commitBodyTable": true,
   "customManagers": [
@@ -37,11 +33,36 @@
   ],
   "packageRules": [
     {
+      "description": "Group all github-tags updates into a single PR",
+      "matchDatasources": [
+        "github-tags"
+      ],
       "matchUpdateTypes": [
+        "digest",
+        "pinDigest",
+        "major",
         "minor",
         "patch"
       ],
-      "matchCurrentVersion": "!/^0/"
+      "groupName": "all github tags",
+      "pinDigests": true
+    },
+    {
+      "description": "Avoid pinning digests for github-tags dependencies tracked via '# renovate:' annotations, as they are plain versions with no digest to update",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchDatasources": [
+        "github-tags"
+      ],
+      "pinDigests": false
+    },
+    {
+      "description": "Skip alpha releases of container images",
+      "matchDatasources": [
+        "docker"
+      ],
+      "allowedVersions": "!/alpha/"
     }
   ]
 }

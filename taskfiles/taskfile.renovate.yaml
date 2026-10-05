@@ -1,5 +1,5 @@
 # renovate: datasource=github-tags depName=go-task/task versioning=semver
-version: 3.53.1
+version: 3.54.0
 
 vars:
   # renovate: datasource=docker depName=renovate/renovate versioning=docker
