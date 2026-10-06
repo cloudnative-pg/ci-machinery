@@ -1,6 +1,8 @@
-version: 3.53.1
+# renovate: datasource=github-tags depName=go-task/task versioning=semver
+version: 3.54.0
 
 vars:
+  # renovate: datasource=docker depName=quay.io/operator-framework/operator-sdk versioning=docker
   OPERATOR_SDK_IMAGE_VERSION: v1.42.3@sha256:b7378eb179b97fbdf1ff1304e86f62e9ff9f9c2d0089464111ce8eddd39e2013
   REGISTRY_CA_VOLUME: '{{ .REGISTRY_CA_VOLUME | default "cnpg-registry-tls" }}'
   REGISTRY_CA_PEM:

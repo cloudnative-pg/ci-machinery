@@ -1,0 +1,31 @@
+# renovate: datasource=github-tags depName=go-task/task versioning=semver
+version: 3.54.0
+
+vars:
+  # renovate: datasource=docker depName=renovate/renovate versioning=docker
+  RENOVATE_IMAGE_VERSION: 44.121.4@sha256:170a7a623a0da4f3dd8333d00fb33657d6517577a4281daba383f78429355849
+
+tasks:
+  validate:
+    desc: Validate the Renovate configuration
+    summary: |
+      Runs `renovate-config-validator --strict` against the project's
+      Renovate configuration file.
+
+      Configurable vars:
+        CONFIG_FILE  Path to the Renovate configuration file, relative
+                     to the working directory. Default: "renovate.json"
+    vars:
+      CONFIG_FILE: '{{ .CONFIG_FILE | default "renovate.json" }}'
+    dir: '{{ .USER_WORKING_DIR }}'
+    preconditions:
+      - sh: 'test -f "{{ .CONFIG_FILE }}"'
+        msg: "CONFIG_FILE '{{ .CONFIG_FILE }}' does not exist"
+    cmds:
+      - >
+        dagger --progress plain core container
+        from --address renovate/renovate:{{ .RENOVATE_IMAGE_VERSION }}
+        with-mounted-file --path /config/renovate.json --source {{ .CONFIG_FILE | shellQuote }}
+        with-workdir --path /config
+        with-exec --args renovate-config-validator --args --strict --args renovate.json
+        stdout
