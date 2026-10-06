@@ -63,6 +63,7 @@ tasks:
     cmds:
       - task: teardown-container-registry
       - task: teardown-docker-network
+      - task: teardown-builder
 
   teardown-container-registry:
     desc: Stop the local Docker registry if running
@@ -82,28 +83,20 @@ tasks:
     status:
       - "! docker network inspect {{ .REGISTRY_NETWORK }} >/dev/null 2>&1"
 
-  create-builder:
+  setup-builder:
     desc: Create a buildx builder
-    internal: true
     run: once
     deps:
-      - start-build-network
+      - setup-container-registry
     cmds:
       - docker buildx create --name {{ .BUILDER_NAME }} --driver-opt "network={{ .REGISTRY_NETWORK }}"
     status:
       - docker buildx inspect {{ .BUILDER_NAME }}
 
-
-  setup-builder:
-    desc: Create registry and docker builder sharing the same network
-    summary: |
-      Setup the local container registry and the docker builder sharing the same docker network
-    run: once
-    deps:
-      - generate-certs
-      - start-build-network
-      - start-registry
-      - registry-network-connect
-      - create-builder
+  teardown-builder:
+    desc: Delete builder container
+    silent: true
     cmds:
-      - echo "Setup registry and builder"
+      - docker stop {{ .BUILDER_NAME }}
+    status:
+      - "! docker buildx inspect {{ .BUILDER_NAME }}"
