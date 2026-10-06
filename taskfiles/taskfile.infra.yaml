@@ -7,6 +7,7 @@ vars:
   REGISTRY_HOST_PORT: '{{ .REGISTRY_HOST_PORT | default 5000 }}'
   REGISTRY_INTERNAL_PORT: 5000
   REGISTRY_CA_VOLUME: cnpg-registry-tls
+  DOCKER_BUILDER: cnpg
 
 tasks:
   generate-certs:
@@ -57,13 +58,38 @@ tasks:
     status:
       - \[ "$(docker inspect -f {{`'{{.State.Running}}'`}} "{{ .REGISTRY_NAME }}" 2> /dev/null)" == 'true' \]
 
+  setup-docker-builder:
+    desc: Create a buildx builder
+    run: once
+    deps:
+      - setup-docker-network
+    vars:
+      # renovate: datasource=docker depName=moby/buildkit versioning=docker
+      BUILDER_IMAGE: moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+    cmds:
+      - |
+        cat > buildkitd.toml <<EOF
+        [registry."{{ .REGISTRY_NAME }}:{{ .REGISTRY_INTERNAL_PORT }}"]
+          insecure = true
+        EOF
+      - defer: rm -f buildkitd.toml
+      - >
+        docker buildx create --name {{ .DOCKER_BUILDER }}
+        --driver docker-container
+        --driver-opt "image={{ .BUILDER_IMAGE }}"
+        --driver-opt "network={{ .REGISTRY_NETWORK }}"
+        --buildkitd-config buildkitd.toml
+        --bootstrap
+    status:
+      - docker buildx inspect {{ .DOCKER_BUILDER }}
+
   teardown:
     desc: Teardown the resources created by the tasks
     silent: true
     cmds:
       - task: teardown-container-registry
-      - task: teardown-docker-network
       - task: teardown-builder
+      - task: teardown-docker-network
 
   teardown-container-registry:
     desc: Stop the local Docker registry if running
@@ -83,20 +109,10 @@ tasks:
     status:
       - "! docker network inspect {{ .REGISTRY_NETWORK }} >/dev/null 2>&1"
 
-  setup-builder:
-    desc: Create a buildx builder
-    run: once
-    deps:
-      - setup-container-registry
-    cmds:
-      - docker buildx create --name {{ .BUILDER_NAME }} --driver-opt "network={{ .REGISTRY_NETWORK }}"
-    status:
-      - docker buildx inspect {{ .BUILDER_NAME }}
-
   teardown-builder:
     desc: Delete builder container
     silent: true
     cmds:
-      - docker stop {{ .BUILDER_NAME }}
+      - docker buildx rm {{ .DOCKER_BUILDER }}
     status:
-      - "! docker buildx inspect {{ .BUILDER_NAME }}"
+      - "! docker buildx inspect {{ .DOCKER_BUILDER }}"
