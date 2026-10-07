@@ -1,6 +1,9 @@
 # renovate: datasource=github-tags depName=go-task/task versioning=semver
 version: 3.54.0
 
+includes:
+  infra: "./taskfile.infra.yaml"
+
 vars:
   # renovate: datasource=docker depName=quay.io/operator-framework/operator-sdk versioning=docker
   OPERATOR_SDK_IMAGE_VERSION: v1.42.3@sha256:b7378eb179b97fbdf1ff1304e86f62e9ff9f9c2d0089464111ce8eddd39e2013
@@ -10,7 +13,7 @@ vars:
   RHEL_CA_TRUST_STEP: '{{ if .REGISTRY_CA_PEM }}with-new-file --path /etc/pki/ca-trust/source/anchors/registry-ca.crt --contents={{ .REGISTRY_CA_PEM | shellQuote }} with-exec --args update-ca-trust{{ end }}'
 
 tasks:
-  bundle:
+  bundle:generate:
     desc: Generate the OLM bundle via operator-sdk
     summary: |
       Runs `operator-sdk generate bundle` to produce the OLM bundle,
@@ -39,6 +42,8 @@ tasks:
         OUTPUT_DIR       Directory the bundle (manifests/, metadata/,
                           bundle.Dockerfile) is exported to. Default:
                           "olm-bundle"
+    deps:
+      - infra:setup-dagger-engine
     vars:
       SOURCE_DIR: '{{ .SOURCE_DIR | default "./" }}'
       INPUT_DIR: '{{ .INPUT_DIR | default "olm-manifests" }}'
@@ -48,6 +53,8 @@ tasks:
       OUTPUT_DIR: '{{ .OUTPUT_DIR | default "olm-bundle" }}'
       GIT_TAG_VERSION:
         sh: set -o pipefail && git describe --tags --match 'v*' | sed -e 's/^v//; s/-g[0-9a-f]\+$//; s/-\([0-9]\+\)$/-dev\1/'
+    env:
+      _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
     requires:
       vars:
         - name: PACKAGE_NAME
