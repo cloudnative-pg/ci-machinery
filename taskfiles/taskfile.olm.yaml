@@ -100,6 +100,7 @@ tasks:
   bundle:image:
     desc: Build the OLM bundle image
     deps:
+      - infra:setup-dagger-engine
       - infra:setup-docker-builder
     summary: |
       Generates the OLM bundle image starting from a bundle directory.
