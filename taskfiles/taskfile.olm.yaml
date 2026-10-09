@@ -26,8 +26,6 @@ tasks:
 
       Configurable vars:
         PACKAGE_NAME     Required. Name of the OLM package (--package).
-        SOURCE_DIR       Directory containing the operator source.
-                          Default: "./"
         INPUT_DIR        Directory containing the rendered manifests
                           (--input-dir). Default: "olm-manifests"
         CHANNELS         Comma-separated list of channels the bundle
@@ -42,10 +40,11 @@ tasks:
         OUTPUT_DIR       Directory the bundle (manifests/, metadata/,
                           bundle.Dockerfile) is exported to. Default:
                           "olm-bundle"
+        WORKDIR          Directory where the task is executed.
+                          Default: {{ .USER_WORKING_DIR }}
     deps:
       - infra:setup-dagger-engine
     vars:
-      SOURCE_DIR: '{{ .SOURCE_DIR | default "./" }}'
       INPUT_DIR: '{{ .INPUT_DIR | default "olm-manifests" }}'
       CHANNELS: '{{ .CHANNELS | default "stable-v0" }}'
       DEFAULT_CHANNEL: '{{ .DEFAULT_CHANNEL | default "stable-v0" }}'
@@ -58,7 +57,7 @@ tasks:
     requires:
       vars:
         - name: PACKAGE_NAME
-    dir: '{{ .USER_WORKING_DIR }}/{{ .SOURCE_DIR }}'
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     run: when_changed
     preconditions:
       - sh: 'test -d "{{ .INPUT_DIR }}"'
@@ -81,3 +80,88 @@ tasks:
         with-exec
         --args=sh --args=-c --args='mkdir bundle-dist && mv bundle.Dockerfile bundle-dist && mv bundle bundle-dist'
         directory --path bundle-dist export --path {{ .OUTPUT_DIR | shellQuote }} --wipe
+
+  bundle:image:
+    desc: Build the OLM bundle image
+    deps:
+      - infra:setup-dagger-engine
+      - infra:setup-docker-builder
+    summary: |
+      Generates the OLM bundle image starting from a bundle directory.
+
+      Configurable vars:
+        IMAGE_NAME           Required. Repository name of the bundle image.
+        BUNDLE_DIR           Directory holding the generated bundle and
+                              bundle.Dockerfile.
+                              Default: "olm-bundle".
+        IMAGE_REGISTRY       Registry the image is tagged for and pushed to.
+                              Default: "{{ .REGISTRY_NAME }}:{{ .REGISTRY_INTERNAL_PORT }}".
+        IMAGE_TAG            Tag applied to the bundle image.
+                              Default: "bundle".
+        PLATFORMS            Comma-separated buildx target platforms.
+                              Default: "linux/amd64,linux/arm64".
+        WORKDIR              Directory where the task is executed.
+                              Default: {{ .USER_WORKING_DIR }}
+    vars:
+      BUNDLE_DIR: '{{ .BUNDLE_DIR | default "olm-bundle" }}'
+      IMAGE_REGISTRY: '{{ .IMAGE_REGISTRY | default (print .REGISTRY_NAME ":" .REGISTRY_INTERNAL_PORT) }}'
+      IMAGE_TAG: '{{ .IMAGE_TAG | default "bundle" }}'
+      PLATFORMS: '{{ .PLATFORMS | default "linux/amd64,linux/arm64" }}'
+    requires:
+      vars:
+        - name: IMAGE_NAME
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    run: when_changed
+    preconditions:
+      - sh: 'test -d "{{ .BUNDLE_DIR }}"'
+        msg: "BUNDLE_DIR '{{ .BUNDLE_DIR }}' does not exist"
+    cmds:
+      - >
+        docker buildx build
+        --builder {{ .DOCKER_BUILDER }}
+        --platform {{ .PLATFORMS }}
+        --tag {{ .IMAGE_REGISTRY }}/{{ .IMAGE_NAME }}:{{ .IMAGE_TAG }}
+        -f {{ .BUNDLE_DIR }}/bundle.Dockerfile
+        --push
+        {{ .BUNDLE_DIR }}
+
+  bundle:validate:
+    desc: Validate the OLM bundle image via operator-sdk
+    summary: |
+      Runs `operator-sdk bundle validate` against the bundle image
+
+      Configurable vars:
+        BUNDLE_IMAGE       Required. The bundle image.
+        EXTRA_ARGS       Additional raw arguments appended to
+                          `operator-sdk bundle validate`.
+                          Example:
+                          `--select-optional suite=operatorframework`.
+                          Must not set `--alpha-select-external`,
+                          `--image-builder` since those break
+                          the expected behaviour of this task.
+                          Default: ""
+    vars:
+      BUNDLE_IMAGE: '{{ .BUNDLE_IMAGE }}'
+      EXTRA_ARGS: '{{ .EXTRA_ARGS | default "" }}'
+    requires:
+      vars:
+        - name: BUNDLE_IMAGE
+    run: when_changed
+    preconditions:
+      - sh: 'test -n "{{ .BUNDLE_IMAGE }}"'
+        msg: "BUNDLE_IMAGE must not be empty."
+      - sh: |
+          case "{{ .EXTRA_ARGS }}" in
+            *--alpha-select-external*|*--image-builder*) exit 1 ;;
+          esac
+        msg: "EXTRA_ARGS must not set --alpha-select-external or --image-builder"
+    cmds:
+      - >
+        dagger --progress plain core container
+        from --address quay.io/operator-framework/operator-sdk:{{ .OPERATOR_SDK_IMAGE_VERSION }}
+        {{ .RHEL_CA_TRUST_STEP }}
+        with-exec
+        --args='sh,-c,"operator-sdk bundle validate
+        --image-builder=none
+        {{ .BUNDLE_IMAGE }}
+        {{ .EXTRA_ARGS }}"'
