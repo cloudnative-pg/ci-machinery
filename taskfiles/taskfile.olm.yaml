@@ -124,3 +124,44 @@ tasks:
         -f {{ .BUNDLE_DIR }}/bundle.Dockerfile
         --push
         {{ .BUNDLE_DIR }}
+
+  bundle:validate:
+    desc: Validate the OLM bundle image via operator-sdk
+    summary: |
+      Runs `operator-sdk bundle validate` against the bundle image
+
+      Configurable vars:
+        BUNDLE_IMAGE       Required. The bundle image.
+        EXTRA_ARGS       Additional raw arguments appended to
+                          `operator-sdk bundle validate`.
+                          Example:
+                          `--select-optional suite=operatorframework`.
+                          Must not set `--alpha-select-external`,
+                          `--image-builder` since those break
+                          the expected behaviour of this task.
+                          Default: ""
+    vars:
+      BUNDLE_IMAGE: '{{ .BUNDLE_IMAGE }}'
+      EXTRA_ARGS: '{{ .EXTRA_ARGS | default "" }}'
+    requires:
+      vars:
+        - name: BUNDLE_IMAGE
+    run: when_changed
+    preconditions:
+      - sh: 'test -n "{{ .BUNDLE_IMAGE }}"'
+        msg: "BUNDLE_IMAGE must not be empty."
+      - sh: |
+          case "{{ .EXTRA_ARGS }}" in
+            *--alpha-select-external*|*--image-builder*) exit 1 ;;
+          esac
+        msg: "EXTRA_ARGS must not set --alpha-select-external or --image-builder"
+    cmds:
+      - >
+        dagger --progress plain core container
+        from --address quay.io/operator-framework/operator-sdk:{{ .OPERATOR_SDK_IMAGE_VERSION }}
+        {{ .RHEL_CA_TRUST_STEP }}
+        with-exec
+        --args='sh,-c,"operator-sdk bundle validate
+        --image-builder=none
+        {{ .BUNDLE_IMAGE }}
+        {{ .EXTRA_ARGS }}"'
