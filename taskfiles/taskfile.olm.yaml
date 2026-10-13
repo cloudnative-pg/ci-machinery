@@ -9,6 +9,10 @@ vars:
   BUSYBOX_VERSION: 1.38.0@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
   # renovate: datasource=docker depName=quay.io/operator-framework/operator-sdk versioning=docker
   OPERATOR_SDK_IMAGE_VERSION: v1.42.3@sha256:b7378eb179b97fbdf1ff1304e86f62e9ff9f9c2d0089464111ce8eddd39e2013
+  # renovate: datasource=docker depName=quay.io/operator-framework/opm versioning=docker
+  OPM_IMAGE_VERSION: v1.74.0@sha256:b32d3891616662620da08d7f0ec42c2e69fa2de43427dc975d35b12f7a969a0f
+  # renovate: datasource=docker depName=alpine/kubectl versioning=docker
+  KUBECTL_VERSION: 1.37.1@sha256:b568e8beb6a79aee269c142343078a278b85e7710f1c0e7d8d6b21d1eb566a48
   REGISTRY_CA_VOLUME: '{{ .REGISTRY_CA_VOLUME | default "cnpg-registry-tls" }}'
   REGISTRY_CA_PEM:
     sh: docker volume inspect {{ .REGISTRY_CA_VOLUME }} >/dev/null 2>&1 && docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro busybox:{{ .BUSYBOX_VERSION }} cat /certs/ca.pem 2>/dev/null || true
@@ -227,3 +231,215 @@ tasks:
         --args=sh --args=-c
         --args={{ printf "operator-sdk scorecard --kubeconfig=/kubeconfig %s %s" (.BUNDLE_IMAGE | shellQuote) .EXTRA_ARGS | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
         stdout
+
+  bundle:test-install:
+    desc: Install the operator through OLM from the bundle image
+          and verify the installation works
+    summary: |
+      Checks that the bundle is installable through OLM.
+
+      Configurable vars:
+        BUNDLE_IMAGE        Required. The bundle image to install.
+        KUBECONFIG_PATH     Required. Path of the kubeconfig file of the
+                             cluster to install the operator in.
+        PACKAGE_NAME        Required. Name of the operator's OLM package.
+        SKIP_DELETE         When "true", the operator is left installed.
+                             Default: "false"
+        WORKDIR             Directory where the task is executed.
+                             Default: {{ .USER_WORKING_DIR }}
+    vars:
+      CATALOG_DIR:
+        sh: mktemp -d
+      # Replace the bundle image's tag, and digest if any, with the "catalog" tag
+      CATALOG_IMAGE: '{{ regexReplaceAll ":[^/]*$" .BUNDLE_IMAGE "" }}:catalog'
+      SKIP_DELETE: '{{ .SKIP_DELETE | default "false" }}'
+    requires:
+      vars:
+        - name: BUNDLE_IMAGE
+        - name: PACKAGE_NAME
+        - name: KUBECONFIG_PATH
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    cmds:
+      - defer: rm -rf {{ .CATALOG_DIR | shellQuote }}
+      - task: catalog:generate
+        vars:
+          BUNDLE_IMAGE: '{{ .BUNDLE_IMAGE }}'
+          OUTPUT_DIR: '{{ .CATALOG_DIR }}'
+      - task: catalog:image
+        vars:
+          CATALOG_IMAGE: '{{ .CATALOG_IMAGE }}'
+          CATALOG_DIR: '{{ .CATALOG_DIR }}'
+      - task: catalog:install
+        vars:
+          CATALOG_IMAGE: '{{ .CATALOG_IMAGE }}'
+          PACKAGE_NAME: '{{ .PACKAGE_NAME }}'
+          KUBECONFIG_PATH: '{{ .KUBECONFIG_PATH }}'
+          NAMESPACE: '{{ .NAMESPACE }}'
+          WORKDIR: '{{ .WORKDIR }}'
+      - task: catalog:uninstall
+        if: '[ "{{ .SKIP_DELETE }}" != "true" ]'
+        vars:
+          PACKAGE_NAME: '{{ .PACKAGE_NAME }}'
+          KUBECONFIG_PATH: '{{ .KUBECONFIG_PATH }}'
+          WORKDIR: '{{ .WORKDIR }}'
+
+  catalog:generate:
+    desc: Generate an ephemeral OLM catalog containing only the bundle
+    internal: true
+    deps:
+      - infra:setup-dagger-engine
+    vars:
+      OPM_IMAGE: quay.io/operator-framework/opm:{{ .OPM_IMAGE_VERSION }}
+      CATALOG_TEMPLATE: |
+        schema: olm.semver
+        GenerateMajorChannels: true
+        GenerateMinorChannels: false
+        Stable:
+          Bundles:
+            - Image: {{ .BUNDLE_IMAGE }}
+    env:
+      _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
+    requires:
+      vars:
+        - name: BUNDLE_IMAGE
+        - name: OUTPUT_DIR
+    run: when_changed
+    cmds:
+      - >
+        dagger --progress plain core container
+        from --address {{ .OPM_IMAGE }}
+        with-new-file --path /etc/containers/policy.json
+        --contents='{"default": [{"type": "insecureAcceptAnything"}]}'
+        with-new-file --path /tmp/catalog-template.yaml --contents={{ .CATALOG_TEMPLATE | shellQuote }}
+        with-workdir --path /work
+        with-exec --args=mkdir,-p,configs/operator
+        with-exec --args=opm,alpha,render-template,semver,--skip-tls-verify,-o,yaml,/tmp/catalog-template.yaml
+        --redirect-stdout=/work/configs/operator/catalog.yaml
+        with-exec --args=opm,validate,configs
+        with-exec --args=opm,generate,dockerfile,configs,--base-image,{{ .OPM_IMAGE }},--builder-image,{{ .OPM_IMAGE }}
+        with-exec --args=chmod,-R,a+rX,/work
+        directory --path /work
+        export --path {{ .OUTPUT_DIR | shellQuote }} --wipe
+
+  catalog:image:
+    desc: Build the OLM catalog image
+    deps:
+      - infra:setup-docker-builder
+    internal: true
+    vars:
+      PLATFORMS: '{{ .PLATFORMS | default "linux/amd64,linux/arm64" }}'
+    requires:
+      vars:
+        - name: CATALOG_IMAGE
+        - name: CATALOG_DIR
+    run: when_changed
+    preconditions:
+      - sh: 'test -f "{{ .CATALOG_DIR }}/configs.Dockerfile"'
+        msg: "CATALOG_DIR '{{ .CATALOG_DIR }}' does not contain configs.Dockerfile"
+    cmds:
+      - >
+        docker buildx build
+        --builder {{ .DOCKER_BUILDER }}
+        --platform {{ .PLATFORMS }}
+        --tag {{ .CATALOG_IMAGE }}
+        -f {{ .CATALOG_DIR }}/configs.Dockerfile
+        --push
+        {{ .CATALOG_DIR }}
+
+  catalog:install:
+    desc: Install the operator through OLM from a catalog image
+    deps:
+      - infra:setup-dagger-engine
+    internal: true
+    vars:
+      NAMESPACE: 'operators'
+      TIMEOUT: '2m'
+      CATALOG_SOURCE: |
+        apiVersion: operators.coreos.com/v1alpha1
+        kind: CatalogSource
+        metadata:
+          name: operators
+          namespace: {{ .NAMESPACE }}
+        spec:
+          sourceType: grpc
+          image: {{ .CATALOG_IMAGE }}
+          grpcPodConfig:
+            securityContextConfig: restricted
+      SUBSCRIPTION: |
+        apiVersion: operators.coreos.com/v1alpha1
+        kind: Subscription
+        metadata:
+          name: operator
+          namespace: {{ .NAMESPACE }}
+        spec:
+          name: {{ .PACKAGE_NAME }}
+          source: operators
+          sourceNamespace: {{ .NAMESPACE }}
+          installPlanApproval: Automatic
+    env:
+      _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
+    requires:
+      vars:
+        - name: CATALOG_IMAGE
+        - name: PACKAGE_NAME
+        - name: KUBECONFIG_PATH
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    preconditions:
+      - sh: 'test -f "{{ .KUBECONFIG_PATH }}"'
+        msg: "KUBECONFIG_PATH '{{ .KUBECONFIG_PATH }}' does not exist"
+    cmds:
+      - >
+        dagger --progress plain core container
+        from --address alpine/kubectl:{{ .KUBECTL_VERSION }}
+        with-new-file --path /root/.kube/config --contents="$(cat {{ .KUBECONFIG_PATH | shellQuote }})"
+        with-new-file --path /manifests/catalog-source.yaml --contents={{ .CATALOG_SOURCE | shellQuote }}
+        with-new-file --path /manifests/subscription.yaml --contents={{ .SUBSCRIPTION | shellQuote }}
+        with-env-variable --name=CACHEBUSTER --value="$(date)"
+        with-exec --args=apply,-f,/manifests --use-entrypoint
+        sync
+      # Wait for the CSV to get healthy
+      - >
+        dagger --progress plain core container
+        from --address alpine/kubectl:{{ .KUBECTL_VERSION }}
+        with-new-file --path /root/.kube/config --contents="$(cat {{ .KUBECONFIG_PATH | shellQuote }})"
+        with-env-variable --name=CACHEBUSTER --value="$(date)"
+        with-exec --args=wait,-n,{{ .NAMESPACE }},--timeout={{ .TIMEOUT }},subscription/operator,--for=jsonpath={.status.installedCSV}
+        --use-entrypoint
+        with-exec --args=sh --args=-c
+        --args='kubectl wait -n {{ .NAMESPACE }} --timeout={{ .TIMEOUT }}
+        csv/$(kubectl get -n {{ .NAMESPACE }} subscription/operator -o jsonpath={.status.installedCSV})
+        --for=jsonpath={.status.phase}=Succeeded'
+        sync
+
+  catalog:uninstall:
+    desc: Uninstall the operator installed by `catalog:install`
+    deps:
+      - infra:setup-dagger-engine
+    internal: true
+    vars:
+      NAMESPACE: 'operators'
+      TIMEOUT: '1m'
+      OPERATOR_LABEL: operators.coreos.com/{{ .PACKAGE_NAME }}.{{ .NAMESPACE }}
+    env:
+      _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
+    requires:
+      vars:
+        - name: PACKAGE_NAME
+        - name: KUBECONFIG_PATH
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    preconditions:
+      - sh: 'test -f "{{ .KUBECONFIG_PATH }}"'
+        msg: "KUBECONFIG_PATH '{{ .KUBECONFIG_PATH }}' does not exist"
+    cmds:
+      - >
+        dagger --progress plain core container
+        from --address alpine/kubectl:{{ .KUBECTL_VERSION }}
+        with-new-file --path /root/.kube/config --contents="$(cat {{ .KUBECONFIG_PATH | shellQuote }})"
+        with-env-variable --name=CACHEBUSTER --value="$(date)"
+        with-exec --args=delete,-n,{{ .NAMESPACE }},subscription/operator,--ignore-not-found,--timeout={{ .TIMEOUT }}
+        --use-entrypoint
+        with-exec --args=delete,-n,{{ .NAMESPACE }},csv,-l,{{ .OPERATOR_LABEL }},--ignore-not-found,--timeout={{ .TIMEOUT }}
+        --use-entrypoint
+        with-exec --args=delete,-n,{{ .NAMESPACE }},catalogsource/operators,--ignore-not-found,--timeout={{ .TIMEOUT }}
+        --use-entrypoint
+        sync
