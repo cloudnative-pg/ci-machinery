@@ -169,3 +169,4 @@ tasks:
         --image-builder=none
         {{ .BUNDLE_IMAGE }}
         {{ .EXTRA_ARGS }}"'
+        stdout
