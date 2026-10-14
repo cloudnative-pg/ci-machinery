@@ -9,7 +9,7 @@ vars:
   OPERATOR_SDK_IMAGE_VERSION: v1.42.3@sha256:b7378eb179b97fbdf1ff1304e86f62e9ff9f9c2d0089464111ce8eddd39e2013
   REGISTRY_CA_VOLUME: '{{ .REGISTRY_CA_VOLUME | default "cnpg-registry-tls" }}'
   REGISTRY_CA_PEM:
-    sh: docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs busybox cat /certs/ca.pem 2>/dev/null || true
+    sh: docker volume inspect {{ .REGISTRY_CA_VOLUME }} >/dev/null 2>&1 && docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro busybox cat /certs/ca.pem 2>/dev/null || true
   RHEL_CA_TRUST_STEP: '{{ if .REGISTRY_CA_PEM }}with-new-file --path /etc/pki/ca-trust/source/anchors/registry-ca.crt --contents={{ .REGISTRY_CA_PEM | shellQuote }} with-exec --args update-ca-trust{{ end }}'
 
 tasks:

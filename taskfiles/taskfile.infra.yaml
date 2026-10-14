@@ -58,6 +58,7 @@ tasks:
             -CAcreateserial -out server-cert.pem -extfile extfile.cnf'
     status:
       - docker volume inspect {{ .REGISTRY_CA_VOLUME }}
+      - docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro busybox test -f /certs/server-cert.pem
 
   setup-docker-network:
     desc: Setup Docker network to connect all the services
