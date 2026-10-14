@@ -127,10 +127,13 @@ tasks:
   bundle:validate:
     desc: Validate the OLM bundle image via operator-sdk
     summary: |
-      Runs `operator-sdk bundle validate` against the bundle image
+      Runs `operator-sdk bundle validate` against the bundle image.
+      The validation runs inside the dagger engine container, so the
+      image must be reachable from there (e.g. the internal registry
+      name and port, not localhost).
 
       Configurable vars:
-        BUNDLE_IMAGE       Required. The bundle image.
+        BUNDLE_IMAGE     Required. The bundle image.
         EXTRA_ARGS       Additional raw arguments appended to
                           `operator-sdk bundle validate`.
                           Example:
