@@ -15,10 +15,7 @@ vars:
   # renovate: datasource=github-releases depName=kubernetes-sigs/kind
   KIND_VERSION: v0.33.0
   # renovate: datasource=docker depName=kindest/node versioning=docker
-  KIND_NODE_VERSION: v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
-  K8S_VERSION: '{{ regexReplaceAll "^v([0-9.]+).*" .KIND_NODE_VERSION "$1" }}'
-  # Total number of Kind nodes: 1 control-plane plus (KIND_NODES - 1) workers
-  KIND_NODES: '{{ .KIND_NODES | default 1 }}'
+  KIND_NODE_TAG: v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
 
   DOCKER_SOCKET:
     sh: docker context inspect -f {{`'{{json .Endpoints.docker.Host}}'`}} $(docker context show)
@@ -27,7 +24,7 @@ vars:
     ARCH=\$(uname -m);
     case \${ARCH} in
     x86_64) ARCH=amd64 ;;
-    aarch64|arm64) ARCH=arm64 ;;
+    aarch64) ARCH=arm64 ;;
     *) echo unsupported arch: \${ARCH} >&2; exit 1 ;;
     esac;
     wget -qO /usr/local/bin/kind https://github.com/kubernetes-sigs/kind/releases/download/{{ .KIND_VERSION }}/kind-linux-\${ARCH};
@@ -144,39 +141,31 @@ tasks:
   setup-kind:
     desc: Setup a Kind cluster
     summary: |
-      Creates a Kind cluster attached to the local registry's Docker network
-      and configures every node to trust the local registry.
+      Creates a Kind cluster attached to the local Docker network.
 
       Variables:
-        NAME_SUFFIX Required. Suffix of the cluster name
-                    (cnpg-<k8s version>-<NAME_SUFFIX>), so that multiple
-                    clusters can coexist.
-        KIND_NODES  Total number of nodes (default: 1). One control-plane
-                    node plus (KIND_NODES - 1) workers.
+        CLUSTER_NAME  Name of the cluster (default: cnpg-<k8s_version>).
+        NODES         Total number of nodes (default: 1).
+        KIND_NODE_TAG kindest/node image tag, optionally with digest
+                      (default: DEFAULT_KIND_NODE_TAG).
     deps:
-      - setup-container-registry
       - setup-dagger-engine
-    internal: true
-    run: once
-    requires:
-      vars:
-        - NAME_SUFFIX
+    run: when_changed
     vars:
-      # Defined here, not globally, since NAME_SUFFIX is a call variable
-      KIND_CLUSTER_NAME: cnpg-{{ .K8S_VERSION }}-{{ .NAME_SUFFIX }}
+      K8S_VERSION: '{{ regexReplaceAll "^v([0-9.]+).*" .KIND_NODE_TAG "$1" }}'
+      CLUSTER_NAME: '{{ .CLUSTER_NAME | default (printf "cnpg-%s" .K8S_VERSION) }}'
       REGISTRY_DIR: /etc/containerd/certs.d/{{ .REGISTRY_NAME }}:{{ .REGISTRY_INTERNAL_PORT }}
+      NODES: '{{ .NODES | default 1 }}'
     env:
       _EXPERIMENTAL_DAGGER_RUNNER_HOST: container://{{ .DAGGER_ENGINE }}
     preconditions:
-      - sh: test "{{ .KIND_NODES }}" -ge 1 2>/dev/null
-        msg: "KIND_NODES must be an integer >= 1, got '{{ .KIND_NODES }}'"
+      - sh: test "{{ .NODES }}" -ge 1 2>/dev/null
+        msg: "NODES must be an integer >= 1, got '{{ .NODES }}'"
     cmds:
       - |
         KIND_CONFIG=$(cat <<'EOF'
         kind: Cluster
         apiVersion: kind.x-k8s.io/v1alpha4
-        featureGates:
-          ImageVolume: true
         containerdConfigPatches:
           - |-
             [plugins."io.containerd.cri.v1.images".registry]
@@ -185,28 +174,28 @@ tasks:
           - role: control-plane
         EOF
         )
-        for _ in $(seq 2 {{ .KIND_NODES }}); do
+        i=1
+        while [ "${i}" -lt {{ .NODES }} ]; do
           KIND_CONFIG="${KIND_CONFIG}
           - role: worker"
+          i=$((i + 1))
         done
         {{ .KIND_TOOLBOX }} \
         with-new-file --contents="${KIND_CONFIG}" --path=/root/kind-config.yaml \
-        with-exec --args="kind","create","cluster","--name","{{ .KIND_CLUSTER_NAME }}","--image","kindest/node:{{ .KIND_NODE_VERSION }}","--config","/root/kind-config.yaml" sync
-      # Apply the same registry trust setup to every node of the cluster
+        with-exec --args="kind","create","cluster","--name","{{ .CLUSTER_NAME }}","--image","kindest/node:{{ .KIND_NODE_TAG }}","--config","/root/kind-config.yaml" sync
+      # Skip TLS verification for the local registry
       - |
-        CA_PEM=$(docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs --entrypoint cat alpine/openssl /certs/ca.pem)
-        for node in $(docker ps -q --filter "label=io.x-k8s.kind.cluster={{ .KIND_CLUSTER_NAME }}"); do
+        for node in $(docker ps -q --filter "label=io.x-k8s.kind.cluster={{ .CLUSTER_NAME }}"); do
           docker exec "${node}" mkdir -p "{{ .REGISTRY_DIR }}"
-          printf '%s\n' "${CA_PEM}" | docker exec -i "${node}" cp /dev/stdin "{{ .REGISTRY_DIR }}/ca.pem"
           cat <<EOF | docker exec -i "${node}" cp /dev/stdin "{{ .REGISTRY_DIR }}/hosts.toml"
-        [host."https://{{ .REGISTRY_NAME }}:{{ .REGISTRY_INTERNAL_PORT }}"]
-        ca = "{{ .REGISTRY_DIR }}/ca.pem"
+        server = "https://{{ .REGISTRY_NAME }}:{{ .REGISTRY_INTERNAL_PORT }}"
+        skip_verify = true
         EOF
         done
     status:
       - >
         test "$({{ .KIND_TOOLBOX }}
-        with-exec --args="sh","-c","kind get clusters 2>/dev/null | grep -qx {{ .KIND_CLUSTER_NAME }} && echo true || echo false" stdout)" = "true"
+        with-exec --args="sh","-c","kind get clusters 2>/dev/null | grep -qx {{ .CLUSTER_NAME }} && echo true || echo false" stdout)" = "true"
 
   teardown:
     desc: Teardown the resources created by the tasks
@@ -214,39 +203,33 @@ tasks:
     cmds:
       - task: teardown-container-registry
       - task: teardown-builder
+      - task: teardown-kind
       - task: teardown-dagger-engine
       - task: teardown-docker-network
 
   teardown-kind:
-    desc: Delete the Kind cluster identified by NAME_SUFFIX
+    desc: Delete the Kind cluster identified by CLUSTER_NAME
     summary: |
-      Deletes the cluster created by setup-kind with the same NAME_SUFFIX.
-      Other Kind clusters are left untouched.
+      Deletes the cluster with the name CLUSTER_NAME.
 
-      If the Dagger engine is running, the cluster is deleted with
-      "kind delete cluster". Otherwise kind is not reachable, so the node
-      containers of the cluster are removed directly with Docker.
-
-      Not part of the teardown task, since it needs a NAME_SUFFIX.
+      Variables:
+        CLUSTER_NAME  Name of the cluster (default: cnpg-<k8s_version>).
+    deps:
+      - setup-dagger-engine
     silent: true
-    requires:
-      vars:
-        - NAME_SUFFIX
     vars:
-      # Defined here, not globally, since NAME_SUFFIX is a call variable
-      KIND_CLUSTER_NAME: cnpg-{{ .K8S_VERSION }}-{{ .NAME_SUFFIX }}
+      K8S_VERSION: '{{ regexReplaceAll "^v([0-9.]+).*" .KIND_NODE_TAG "$1" }}'
+      CLUSTER_NAME: '{{ .CLUSTER_NAME | default (printf "cnpg-%s" .K8S_VERSION) }}'
     env:
       _EXPERIMENTAL_DAGGER_RUNNER_HOST: container://{{ .DAGGER_ENGINE }}
     cmds:
-      - |
-        if [ "$(docker inspect -f {{`'{{json .State.Running}}'`}} {{ .DAGGER_ENGINE }} 2>/dev/null)" = "true" ]; then
-          {{ .KIND_TOOLBOX }} \
-          with-exec --args="kind","delete","cluster","--name","{{ .KIND_CLUSTER_NAME }}" sync
-        else
-          docker rm -fv $(docker ps -aq --filter "label=io.x-k8s.kind.cluster={{ .KIND_CLUSTER_NAME }}")
-        fi
+      - >
+        {{ .KIND_TOOLBOX }}
+        with-exec --args="kind","delete","cluster","--name","{{ .CLUSTER_NAME }}" sync
     status:
-      - test -z "$(docker ps -aq --filter "label=io.x-k8s.kind.cluster={{ .KIND_CLUSTER_NAME }}")"
+      - >
+        test "$({{ .KIND_TOOLBOX }}
+        with-exec --args="sh","-c","kind get clusters 2>/dev/null | grep -qx {{ .CLUSTER_NAME }} && echo true || echo false" stdout)" = "false"
 
   teardown-container-registry:
     desc: Stop the local Docker registry if running
