@@ -5,11 +5,13 @@ includes:
   infra: "./taskfile.infra.yaml"
 
 vars:
+  # renovate: datasource=docker depName=busybox versioning=docker
+  BUSYBOX_IMAGE: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
   # renovate: datasource=docker depName=quay.io/operator-framework/operator-sdk versioning=docker
   OPERATOR_SDK_IMAGE_VERSION: v1.42.3@sha256:b7378eb179b97fbdf1ff1304e86f62e9ff9f9c2d0089464111ce8eddd39e2013
   REGISTRY_CA_VOLUME: '{{ .REGISTRY_CA_VOLUME | default "cnpg-registry-tls" }}'
   REGISTRY_CA_PEM:
-    sh: docker volume inspect {{ .REGISTRY_CA_VOLUME }} >/dev/null 2>&1 && docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro busybox cat /certs/ca.pem 2>/dev/null || true
+    sh: docker volume inspect {{ .REGISTRY_CA_VOLUME }} >/dev/null 2>&1 && docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro {{ .BUSYBOX_IMAGE }} cat /certs/ca.pem 2>/dev/null || true
   RHEL_CA_TRUST_STEP: '{{ if .REGISTRY_CA_PEM }}with-new-file --path /etc/pki/ca-trust/source/anchors/registry-ca.crt --contents={{ .REGISTRY_CA_PEM | shellQuote }} with-exec --args update-ca-trust{{ end }}'
 
 tasks:
