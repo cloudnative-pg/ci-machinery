@@ -1,6 +1,6 @@
 [![CloudNativePG](./logo/cloudnativepg.png)](https://cloudnative-pg.io/)
 
-# CI Machinery
+# CI Machinery for CloudNativePG
 
 A unified set of CI tasks shared across the projects of the CloudNativePG
 ecosystem, such as the
@@ -16,6 +16,11 @@ and release time.
 
 CI Machinery centralizes those tasks in a single place, so they are written,
 fixed and improved once and benefit every project in the ecosystem.
+
+Ideally, this repository will also provide a generic and reusable way to set
+up test environments. Today, that logic is duplicated in every project, such
+as CloudNativePG itself, the Barman Cloud Plugin, Klio, the Helm charts and the
+CNPG Playground.
 
 ## Usage
 
