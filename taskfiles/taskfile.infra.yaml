@@ -9,6 +9,8 @@ vars:
   REGISTRY_CA_VOLUME: cnpg-registry-tls
   DOCKER_BUILDER: cnpg
   DAGGER_ENGINE: dagger-engine-cnpg
+  # renovate: datasource=docker depName=busybox versioning=docker
+  BUSYBOX_IMAGE: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
 
 tasks:
   generate-certs:
@@ -30,7 +32,7 @@ tasks:
             -CAcreateserial -out server-cert.pem -extfile extfile.cnf'
     status:
       - docker volume inspect {{ .REGISTRY_CA_VOLUME }}
-      - docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro busybox test -f /certs/server-cert.pem
+      - docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro {{ .BUSYBOX_IMAGE }} test -s /certs/server-cert.pem
 
   setup-docker-network:
     desc: Setup Docker network to connect all the services
