@@ -175,3 +175,52 @@ tasks:
         {{ .BUNDLE_IMAGE }}
         {{ .EXTRA_ARGS }}"'
         stdout
+
+  bundle:scorecard:
+    desc: Run the Scorecard tests against the OLM bundle image via operator-sdk
+    summary: |
+      Runs `operator-sdk scorecard` against the bundle image on the
+      Kubernetes cluster referenced by KUBECONFIG_FILE. The bundle must
+      ship a Scorecard configuration (tests/scorecard/config.yaml).
+
+      Configurable vars:
+        BUNDLE_IMAGE     Required. The bundle image.
+        KUBECONFIG_FILE  Required. Path to the kubeconfig of the target
+                          cluster, relative to WORKDIR.
+        EXTRA_ARGS       Additional raw arguments appended to
+                          `operator-sdk scorecard`.
+                          Example: `--selector=suite=basic --wait-time=120s`.
+                           Default: ""
+        WORKDIR          Directory where the task is executed.
+                          Default: {{ .USER_WORKING_DIR }}
+    deps:
+      - infra:setup-dagger-engine
+    vars:
+      EXTRA_ARGS: '{{ .EXTRA_ARGS | default "" }}'
+    env:
+      _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
+    requires:
+      vars:
+        - name: BUNDLE_IMAGE
+        - name: KUBECONFIG_FILE
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    run: when_changed
+    preconditions:
+      - sh: 'test -f "{{ .KUBECONFIG_FILE }}"'
+        msg: "KUBECONFIG_FILE '{{ .KUBECONFIG_FILE }}' does not exist"
+      - sh: |
+          case "{{ .EXTRA_ARGS }}" in
+            *--kubeconfig*) exit 1 ;;
+          esac
+        msg: "EXTRA_ARGS must not set --kubeconfig"
+    cmds:
+      - >
+        dagger --progress plain core container
+        from --address quay.io/operator-framework/operator-sdk:{{ .OPERATOR_SDK_IMAGE_VERSION }}
+        {{ .RHEL_CA_TRUST_STEP }}
+        with-mounted-file --path /kubeconfig --source {{ .KUBECONFIG_FILE | shellQuote }}
+        with-env-variable --name=CACHE_BUSTER --value="$(date)"
+        with-exec
+        --args=sh --args=-c
+        --args={{ printf "operator-sdk scorecard --kubeconfig=/kubeconfig %s %s" (.BUNDLE_IMAGE | shellQuote) .EXTRA_ARGS | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
+        stdout
