@@ -35,10 +35,12 @@ tasks:
         DEFAULT_CHANNEL  Channel set as the package's default
                           (--default-channel). Default: "stable-v0"
         EXTRA_ARGS       Additional raw arguments appended to
-                          `operator-sdk generate bundle`. Must not set
-                          --package, --input-dir, --channels, --version,
-                          --default-channel, or --output-dir, since those
-                          are already set by this task. Default: ""
+                          `operator-sdk generate bundle --manifests`
+                          (e.g. --use-image-digests).
+                          Must not set --package, --input-dir, --channels,
+                          --version, --default-channel, --output-dir,
+                          --manifests, or --metadata, since those are
+                          already set by this task. Default: ""
         OUTPUT_DIR       Directory the bundle (manifests/, metadata/,
                           tests/, bundle.Dockerfile) is exported to.
                           Default: "olm-bundle"
@@ -66,9 +68,9 @@ tasks:
         msg: "INPUT_DIR '{{ .INPUT_DIR }}' does not exist"
       - sh: |
           case "{{ .EXTRA_ARGS }}" in
-            *--package*|*--input-dir*|*--channels*|*--default-channel*|*--output-dir*|*--version*) exit 1 ;;
+            *--package*|*--input-dir*|*--channels*|*--default-channel*|*--output-dir*|*--version*|*--manifests*|*--metadata*) exit 1 ;;
           esac
-        msg: "EXTRA_ARGS must not set --package, --input-dir, --channels, --default-channel, --output-dir, or --version"
+        msg: "EXTRA_ARGS must not set --package, --input-dir, --channels, --default-channel, --output-dir, --version, --manifests, or --metadata"
     cmds:
       # Manifests and metadata are generated in two separate steps: in a single
       # run with --input-dir, operator-sdk writes the scorecard config under
