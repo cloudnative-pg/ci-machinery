@@ -33,13 +33,15 @@ tasks:
         DEFAULT_CHANNEL  Channel set as the package's default
                           (--default-channel). Default: "stable-v0"
         EXTRA_ARGS       Additional raw arguments appended to
-                          `operator-sdk generate bundle`. Must not set
-                          --package, --input-dir, --channels, --version,
-                          --default-channel, or --output-dir, since those
-                          are already set by this task. Default: ""
+                          `operator-sdk generate bundle --manifests`
+                          (e.g. --use-image-digests).
+                          Must not set --package, --input-dir, --channels,
+                          --version, --default-channel, --output-dir,
+                          --manifests, or --metadata, since those are
+                          already set by this task. Default: ""
         OUTPUT_DIR       Directory the bundle (manifests/, metadata/,
-                          bundle.Dockerfile) is exported to. Default:
-                          "olm-bundle"
+                          tests/, bundle.Dockerfile) is exported to.
+                          Default: "olm-bundle"
         WORKDIR          Directory where the task is executed.
                           Default: {{ .USER_WORKING_DIR }}
     deps:
@@ -64,10 +66,15 @@ tasks:
         msg: "INPUT_DIR '{{ .INPUT_DIR }}' does not exist"
       - sh: |
           case "{{ .EXTRA_ARGS }}" in
-            *--package*|*--input-dir*|*--channels*|*--default-channel*|*--output-dir*|*--version*) exit 1 ;;
+            *--package*|*--input-dir*|*--channels*|*--default-channel*|*--output-dir*|*--version*|*--manifests*|*--metadata*) exit 1 ;;
           esac
-        msg: "EXTRA_ARGS must not set --package, --input-dir, --channels, --default-channel, --output-dir, or --version"
+        msg: "EXTRA_ARGS must not set --package, --input-dir, --channels, --default-channel, --output-dir, --version, --manifests, or --metadata"
     cmds:
+      # Manifests and metadata are generated in two separate steps: in a single
+      # run with --input-dir, operator-sdk writes the scorecard config under
+      # --output-dir but looks for it under --input-dir when generating the
+      # metadata, so bundle.Dockerfile and annotations.yaml miss it.
+      # See https://github.com/operator-framework/operator-sdk/issues/7144
       - >
         dagger --progress plain core container
         from --address quay.io/operator-framework/operator-sdk:{{ .OPERATOR_SDK_IMAGE_VERSION }}
@@ -76,7 +83,10 @@ tasks:
         {{ .RHEL_CA_TRUST_STEP }}
         with-exec
         --args=sh --args=-c
-        --args={{ printf "rm -rf bundle bundle.Dockerfile && operator-sdk generate bundle --package=%s --input-dir=%s --channels=%s --default-channel=%s --version=%s --output-dir=bundle %s < /dev/null" (.PACKAGE_NAME | shellQuote) (.INPUT_DIR | shellQuote) (.CHANNELS | shellQuote) (.DEFAULT_CHANNEL | shellQuote) (.GIT_TAG_VERSION | shellQuote) .EXTRA_ARGS | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
+        --args={{ printf "rm -rf bundle bundle.Dockerfile && operator-sdk generate bundle --manifests --package=%s --input-dir=%s --version=%s --output-dir=bundle %s < /dev/null" (.PACKAGE_NAME | shellQuote) (.INPUT_DIR | shellQuote) (.GIT_TAG_VERSION | shellQuote) .EXTRA_ARGS | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
+        with-exec
+        --args=sh --args=-c
+        --args={{ printf "operator-sdk generate bundle --metadata --package=%s --input-dir=bundle --output-dir=bundle --channels=%s --default-channel=%s < /dev/null" (.PACKAGE_NAME | shellQuote) (.CHANNELS | shellQuote) (.DEFAULT_CHANNEL | shellQuote) | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
         with-exec
         --args=sh --args=-c --args='mkdir bundle-dist && mv bundle.Dockerfile bundle-dist && mv bundle bundle-dist'
         directory --path bundle-dist export --path {{ .OUTPUT_DIR | shellQuote }} --wipe
@@ -166,4 +176,53 @@ tasks:
         --image-builder=none
         {{ .BUNDLE_IMAGE }}
         {{ .EXTRA_ARGS }}"'
+        stdout
+
+  bundle:scorecard:
+    desc: Run the Scorecard tests against the OLM bundle image via operator-sdk
+    summary: |
+      Runs `operator-sdk scorecard` against the bundle image on the
+      Kubernetes cluster referenced by KUBECONFIG_FILE. The bundle must
+      ship a Scorecard configuration (tests/scorecard/config.yaml).
+
+      Configurable vars:
+        BUNDLE_IMAGE     Required. The bundle image.
+        KUBECONFIG_FILE  Required. Path to the kubeconfig of the target
+                          cluster, relative to WORKDIR.
+        EXTRA_ARGS       Additional raw arguments appended to
+                          `operator-sdk scorecard`.
+                          Example: `--selector=suite=basic --wait-time=120s`.
+                           Default: ""
+        WORKDIR          Directory where the task is executed.
+                          Default: {{ .USER_WORKING_DIR }}
+    deps:
+      - infra:setup-dagger-engine
+    vars:
+      EXTRA_ARGS: '{{ .EXTRA_ARGS | default "" }}'
+    env:
+      _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
+    requires:
+      vars:
+        - name: BUNDLE_IMAGE
+        - name: KUBECONFIG_FILE
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    run: when_changed
+    preconditions:
+      - sh: 'test -f "{{ .KUBECONFIG_FILE }}"'
+        msg: "KUBECONFIG_FILE '{{ .KUBECONFIG_FILE }}' does not exist"
+      - sh: |
+          case "{{ .EXTRA_ARGS }}" in
+            *--kubeconfig*) exit 1 ;;
+          esac
+        msg: "EXTRA_ARGS must not set --kubeconfig"
+    cmds:
+      - >
+        dagger --progress plain core container
+        from --address quay.io/operator-framework/operator-sdk:{{ .OPERATOR_SDK_IMAGE_VERSION }}
+        {{ .RHEL_CA_TRUST_STEP }}
+        with-mounted-file --path /kubeconfig --source {{ .KUBECONFIG_FILE | shellQuote }}
+        with-env-variable --name=CACHE_BUSTER --value="$(date)"
+        with-exec
+        --args=sh --args=-c
+        --args={{ printf "operator-sdk scorecard --kubeconfig=/kubeconfig %s %s" (.BUNDLE_IMAGE | shellQuote) .EXTRA_ARGS | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
         stdout
