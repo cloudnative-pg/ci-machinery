@@ -313,10 +313,10 @@ tasks:
         with-new-file --path /tmp/catalog-template.yaml --contents={{ .CATALOG_TEMPLATE | shellQuote }}
         with-workdir --path /work
         with-exec --args=mkdir,-p,configs/operator
+        with-exec --args=opm,generate,dockerfile,configs,--base-image,{{ .OPM_IMAGE }},--builder-image,{{ .OPM_IMAGE }}
         with-exec --args=opm,alpha,render-template,semver,--skip-tls-verify,-o,yaml,/tmp/catalog-template.yaml
         --redirect-stdout=/work/configs/operator/catalog.yaml
         with-exec --args=opm,validate,configs
-        with-exec --args=opm,generate,dockerfile,configs,--base-image,{{ .OPM_IMAGE }},--builder-image,{{ .OPM_IMAGE }}
         with-exec --args=chmod,-R,a+rX,/work
         directory --path /work
         export --path {{ .OUTPUT_DIR | shellQuote }} --wipe
