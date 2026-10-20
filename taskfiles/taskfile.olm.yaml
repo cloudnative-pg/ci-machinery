@@ -443,3 +443,50 @@ tasks:
         with-exec --args=delete,-n,{{ .NAMESPACE }},catalogsource/operators,--ignore-not-found,--timeout={{ .TIMEOUT }}
         --use-entrypoint
         sync
+
+  operator-hub:init:
+    desc: Initialize the operator directory in a community-operators checkout
+    summary: |
+      Scaffolds a new operator directory in a local checkout of
+      https://github.com/cloudnative-pg/community-operators.
+
+      Configurable vars:
+        OPERATOR_NAME            Required. Name of the operator, used as
+                                  the directory name under `operators/`.
+        COMMUNITY_OPERATOR_PATH  Path to the community-operators checkout.
+                                  Default: "community-operators"
+        CI_UPDATE_GRAPH          Update strategy written to `updateGraph`.
+                                  Either "replaces-mode" or "semver-mode".
+                                  Default: "replaces-mode"
+        CI_REVIEWERS             Comma-separated GitHub usernames written
+                                  to `reviewers`.
+                                  Default: "fcanovai, gbartolini, mnencia,
+                                  GabriFedi97, jbattiato, NiccoloFei"
+        WORKDIR                  Directory where the task is executed.
+                                  Default: {{ .USER_WORKING_DIR }}
+    vars:
+      COMMUNITY_OPERATOR_PATH: '{{ .COMMUNITY_OPERATOR_PATH | default "community-operators" }}'
+      CI_UPDATE_GRAPH: '{{ .CI_UPDATE_GRAPH | default "replaces-mode" }}'
+      CI_REVIEWERS: '{{ .CI_REVIEWERS | default "fcanovai, gbartolini, mnencia, GabriFedi97, jbattiato, NiccoloFei", cnpg-bot }}'
+      OPERATOR_DIR: '{{ .COMMUNITY_OPERATOR_PATH }}/operators/{{ .OPERATOR_NAME }}'
+    requires:
+      vars:
+        - name: OPERATOR_NAME
+        - name: CI_UPDATE_GRAPH
+          enum: [ replaces-mode, semver-mode ]
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    preconditions:
+      - sh: 'test -d "{{ .COMMUNITY_OPERATOR_PATH }}/operators"'
+        msg: "COMMUNITY_OPERATOR_PATH '{{ .COMMUNITY_OPERATOR_PATH }}' is not a community-operators checkout (no operators/ directory)"
+      - sh: '! test -e {{ .OPERATOR_DIR | shellQuote }}'
+        msg: "Operator directory '{{ .OPERATOR_DIR }}' already exists"
+    cmds:
+      - mkdir -p {{ .OPERATOR_DIR | shellQuote }}
+      - |
+        cat > {{ printf "%s/ci.yaml" .OPERATOR_DIR | shellQuote }} <<'EOF'
+        updateGraph: {{ .CI_UPDATE_GRAPH }}
+        reviewers:
+        {{- range (splitList "," .CI_REVIEWERS) }}
+          - {{ trim . }}
+        {{- end }}
+        EOF
