@@ -154,7 +154,6 @@ tasks:
     deps:
       - infra:setup-dagger-engine
     vars:
-      BUNDLE_IMAGE: '{{ .BUNDLE_IMAGE }}'
       EXTRA_ARGS: '{{ .EXTRA_ARGS | default "" }}'
     env:
       _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
