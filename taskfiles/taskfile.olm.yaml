@@ -6,7 +6,7 @@ includes:
 
 vars:
   # renovate: datasource=docker depName=busybox versioning=docker
-  BUSYBOX_VERSION: 1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+  BUSYBOX_VERSION: 1.38.0@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
   # renovate: datasource=docker depName=quay.io/operator-framework/operator-sdk versioning=docker
   OPERATOR_SDK_IMAGE_VERSION: v1.42.3@sha256:b7378eb179b97fbdf1ff1304e86f62e9ff9f9c2d0089464111ce8eddd39e2013
   REGISTRY_CA_VOLUME: '{{ .REGISTRY_CA_VOLUME | default "cnpg-registry-tls" }}'
