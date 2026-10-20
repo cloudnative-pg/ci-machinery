@@ -245,7 +245,7 @@ tasks:
           with-exec --args="kind","get","kubeconfig","--name","{{ .CLUSTER_NAME }}","--internal={{ .INTERNAL }}" stdout)
         mkdir -p $(dirname {{ .KUBECONFIG_PATH }})
         echo "${CONFIG}" > {{ .KUBECONFIG_PATH }}
-       
+
   setup-kind-credentials:
     desc: Set credentials for an external registry on the Kind nodes
     summary: |
@@ -299,6 +299,53 @@ tasks:
               echo "set credentials for ${HOST} on $(hostname)"
             '
         done
+
+  install-cnpg:
+    desc: Install the CloudNativePG operator in a Kind cluster
+    summary: |
+      Installs the CloudNativePG operator in the Kind cluster identified by
+      CLUSTER_NAME, creating the cluster if needed, and waits for the
+      operator to become available. Skipped if the operator is already
+      installed.
+
+      Variables:
+        CLUSTER_NAME  Name of the cluster (default: cnpg-<k8s_version>).
+        NODES         Passed to setup-kind (default: 1).
+        KIND_NODE_TAG Passed to setup-kind (default: KIND_NODE_TAG).
+        CNPG_RELEASE  CloudNativePG release, either 'main' or a full
+                      version like 1.30.1 (default: CNPG_RELEASE_DEFAULT).
+    deps:
+      - task: setup-kind
+        vars:
+          CLUSTER_NAME: '{{ .CLUSTER_NAME }}'
+          NODES: '{{ .NODES }}'
+          KIND_NODE_TAG: '{{ .KIND_NODE_TAG }}'
+    run: when_changed
+    vars:
+      # renovate: datasource=github-tags depName=cloudnative-pg/cloudnative-pg versioning=semver-coerced extractVersion=^v(?<version>\d+\.\d+\.\d+)$
+      CNPG_RELEASE_DEFAULT: 1.30.1
+      K8S_VERSION: '{{ regexReplaceAll "^v([0-9.]+).*" .KIND_NODE_TAG "$1" }}'
+      CLUSTER_NAME: '{{ .CLUSTER_NAME | default (printf "cnpg-%s" .K8S_VERSION) }}'
+      CNPG_RELEASE: '{{ .CNPG_RELEASE | default .CNPG_RELEASE_DEFAULT }}'
+      CNPG_MANIFEST:
+        sh: |
+          release="{{ .CNPG_RELEASE }}"
+          if [ "${release}" = "main" ]; then
+            echo "https://raw.githubusercontent.com/cloudnative-pg/artifacts/main/manifests/operator-manifest.yaml"
+          elif echo "${release}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-${release%.*}/releases/cnpg-${release}.yaml"
+          else
+            echo "CNPG_RELEASE must be 'main' or a full version like 1.30.1, got '${release}'" >&2
+            exit 1
+          fi
+      # Use the kubectl shipped in the node: the Dagger engine's DNS cannot
+      # resolve dotless hostnames such as <cluster>-control-plane
+      KUBECTL: docker exec {{ .CLUSTER_NAME }}-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf
+    cmds:
+      - '{{ .KUBECTL }} apply --server-side -f {{ .CNPG_MANIFEST }}'
+      - '{{ .KUBECTL }} wait --for=condition=Available --timeout=2m -n cnpg-system deployments cnpg-controller-manager'
+    status:
+      - '{{ .KUBECTL }} get -n cnpg-system deployments cnpg-controller-manager'
 
   teardown:
     desc: Teardown the resources created by the tasks
