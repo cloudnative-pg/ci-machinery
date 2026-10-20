@@ -189,12 +189,7 @@ tasks:
       Configurable vars:
         BUNDLE_IMAGE     Required. The bundle image.
         KUBECONFIG_FILE  Required. Path to the kubeconfig of the target
-                          cluster, relative to WORKDIR. It must be
-                          reachable from the Dagger engine: for a Kind
-                          cluster created by infra:setup-kind, set the
-                          server to the control-plane IP on the cnpg
-                          network (`kind get kubeconfig` points to
-                          127.0.0.1, which is not reachable).
+                          cluster, relative to WORKDIR.
         EXTRA_ARGS       Additional raw arguments appended to
                           `operator-sdk scorecard`.
                           Example: `--selector=suite=basic --wait-time=120s`.
