@@ -461,7 +461,7 @@ tasks:
       COMMUNITY_OPERATORS_BRANCH: 'main'
     dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     cmds:
-      - git clone --depth 1 --no-tags --branch {{ .COMMUNITY_OPERATORS_BRANCH }} {{ .COMMUNITY_OPERATORS_REPO }} {{ .COMMUNITY_OPERATORS_PATH | shellQuote }}
+      - git clone --single-branch --no-tags --branch {{ .COMMUNITY_OPERATORS_BRANCH }} {{ .COMMUNITY_OPERATORS_REPO }} {{ .COMMUNITY_OPERATORS_PATH | shellQuote }}
     status:
       - test "$(git -C {{ .COMMUNITY_OPERATORS_PATH | shellQuote }} config --get remote.origin.url 2>/dev/null)" = {{ .COMMUNITY_OPERATORS_REPO }}
 
