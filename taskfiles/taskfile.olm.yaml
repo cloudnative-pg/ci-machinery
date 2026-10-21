@@ -444,6 +444,27 @@ tasks:
         --use-entrypoint
         sync
 
+  operator-hub:clone:
+    desc: Clone the community-operators project to a local directory
+    summary: |
+      Clones https://github.com/k8s-operatorhub/community-operators to a
+      local directory.
+
+      Configurable vars:
+        COMMUNITY_OPERATOR_PATH    Directory the project is cloned into.
+                                    Default: "community-operators"
+        WORKDIR                    Directory where the task is executed.
+                                    Default: {{ .USER_WORKING_DIR }}
+    vars:
+      COMMUNITY_OPERATOR_PATH: '{{ .COMMUNITY_OPERATOR_PATH | default "community-operators" }}'
+      COMMUNITY_OPERATOR_REPO: 'https://github.com/k8s-operatorhub/community-operators.git'
+      COMMUNITY_OPERATOR_BRANCH: 'main'
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    cmds:
+      - git clone --depth 1 --no-tags --branch {{ .COMMUNITY_OPERATOR_BRANCH }} {{ .COMMUNITY_OPERATOR_REPO }} {{ .COMMUNITY_OPERATOR_PATH | shellQuote }}
+    status:
+      - test "$(git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} config --get remote.origin.url 2>/dev/null)" = {{ .COMMUNITY_OPERATOR_REPO }}
+
   operator-hub:init:
     desc: Initialize the operator directory in a community-operators checkout
     summary: |
