@@ -490,3 +490,44 @@ tasks:
           - {{ trim . }}
         {{- end }}
         EOF
+
+  operator-hub:add:
+    desc: Add a new bundle to the community-operator project for an operator
+    summary: |
+      Copies an OLM bundle into `operators/<OPERATOR_NAME>/<VERSION>/` of a
+      local checkout of
+      https://github.com/cloudnative-pg/community-operators.
+
+      Configurable vars:
+        OPERATOR_NAME            Required. Name of the operator.
+        VERSION                  Required. Bundle version, in the
+                                  major.minor.patch format.
+        BUNDLE_DIR               Directory containing the bundle
+                                  `manifests/` and `metadata/` directories.
+                                  Default: "olm-bundle/bundle"
+        COMMUNITY_OPERATOR_PATH  Path to the community-operators checkout.
+                                  Default: "community-operators"
+        WORKDIR                  Directory where the task is executed.
+                                  Default: {{ .USER_WORKING_DIR }}
+    vars:
+      BUNDLE_DIR: '{{ .BUNDLE_DIR | default "olm-bundle/bundle" }}'
+      COMMUNITY_OPERATOR_PATH: '{{ .COMMUNITY_OPERATOR_PATH | default "community-operators" }}'
+      OPERATOR_DIR: '{{ .COMMUNITY_OPERATOR_PATH }}/operators/{{ .OPERATOR_NAME }}'
+      VERSION_DIR: '{{ .OPERATOR_DIR }}/{{ .VERSION }}'
+    requires:
+      vars:
+        - name: OPERATOR_NAME
+        - name: VERSION
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    preconditions:
+      - sh: 'echo {{ .VERSION | shellQuote }} | grep -Eq "^[0-9]+\.[0-9]+\.[0-9]+$"'
+        msg: "VERSION '{{ .VERSION }}' is not in the major.minor.patch format"
+      - sh: 'test -d {{ .OPERATOR_DIR | shellQuote }}'
+        msg: "Operator directory '{{ .OPERATOR_DIR }}' does not exist, run operator-hub:init first"
+      - sh: 'test -d {{ printf "%s/manifests" .BUNDLE_DIR | shellQuote }} && test -d {{ printf "%s/metadata" .BUNDLE_DIR | shellQuote }}'
+        msg: "BUNDLE_DIR '{{ .BUNDLE_DIR }}' must contain the manifests/ and metadata/ directories"
+      - sh: '! test -e {{ .VERSION_DIR | shellQuote }}'
+        msg: "Version directory '{{ .VERSION_DIR }}' already exists"
+    cmds:
+      - mkdir -p {{ .VERSION_DIR | shellQuote }}
+      - cp -R {{ printf "%s/manifests" .BUNDLE_DIR | shellQuote }} {{ printf "%s/metadata" .BUNDLE_DIR | shellQuote }} {{ .VERSION_DIR | shellQuote }}
