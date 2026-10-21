@@ -451,19 +451,19 @@ tasks:
       local directory.
 
       Configurable vars:
-        COMMUNITY_OPERATOR_PATH    Directory the project is cloned into.
-                                    Default: "community-operators"
-        WORKDIR                    Directory where the task is executed.
-                                    Default: {{ .USER_WORKING_DIR }}
+        COMMUNITY_OPERATORS_PATH  Directory the project is cloned into.
+                     Default: "community-operators"
+        WORKDIR     Directory where the task is executed.
+                     Default: {{ .USER_WORKING_DIR }}
     vars:
-      COMMUNITY_OPERATOR_PATH: '{{ .COMMUNITY_OPERATOR_PATH | default "community-operators" }}'
-      COMMUNITY_OPERATOR_REPO: 'https://github.com/k8s-operatorhub/community-operators.git'
-      COMMUNITY_OPERATOR_BRANCH: 'main'
+      COMMUNITY_OPERATORS_PATH: '{{ .COMMUNITY_OPERATORS_PATH | default "community-operators" }}'
+      COMMUNITY_OPERATORS_REPO: 'https://github.com/k8s-operatorhub/community-operators.git'
+      COMMUNITY_OPERATORS_BRANCH: 'main'
     dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     cmds:
-      - git clone --depth 1 --no-tags --branch {{ .COMMUNITY_OPERATOR_BRANCH }} {{ .COMMUNITY_OPERATOR_REPO }} {{ .COMMUNITY_OPERATOR_PATH | shellQuote }}
+      - git clone --depth 1 --no-tags --branch {{ .COMMUNITY_OPERATORS_BRANCH }} {{ .COMMUNITY_OPERATORS_REPO }} {{ .COMMUNITY_OPERATORS_PATH | shellQuote }}
     status:
-      - test "$(git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} config --get remote.origin.url 2>/dev/null)" = {{ .COMMUNITY_OPERATOR_REPO }}
+      - test "$(git -C {{ .COMMUNITY_OPERATORS_PATH | shellQuote }} config --get remote.origin.url 2>/dev/null)" = {{ .COMMUNITY_OPERATORS_REPO }}
 
   operator-hub:add:
     desc: Add a new bundle to the community-operator project for an operator
@@ -479,14 +479,14 @@ tasks:
         BUNDLE_DIR               Directory containing the bundle
                                   `manifests/` and `metadata/` directories.
                                   Default: "olm-bundle/bundle"
-        COMMUNITY_OPERATOR_PATH  Path to the community-operators checkout.
+        COMMUNITY_OPERATORS_PATH  Path to the community-operators checkout.
                                   Default: "community-operators"
         WORKDIR                  Directory where the task is executed.
                                   Default: {{ .USER_WORKING_DIR }}
     vars:
       BUNDLE_DIR: '{{ .BUNDLE_DIR | default "olm-bundle/bundle" }}'
-      COMMUNITY_OPERATOR_PATH: '{{ .COMMUNITY_OPERATOR_PATH | default "community-operators" }}'
-      OPERATOR_DIR: '{{ .COMMUNITY_OPERATOR_PATH }}/operators/{{ .OPERATOR_NAME }}'
+      COMMUNITY_OPERATORS_PATH: '{{ .COMMUNITY_OPERATORS_PATH | default "community-operators" }}'
+      OPERATOR_DIR: '{{ .COMMUNITY_OPERATORS_PATH }}/operators/{{ .OPERATOR_NAME }}'
       VERSION_DIR: '{{ .OPERATOR_DIR }}/{{ .VERSION }}'
     requires:
       vars:
@@ -496,8 +496,8 @@ tasks:
     preconditions:
       - sh: 'echo {{ .VERSION | shellQuote }} | grep -Eq "^[0-9]+\.[0-9]+\.[0-9]+$"'
         msg: "VERSION '{{ .VERSION }}' is not in the major.minor.patch format"
-      - sh: 'test -d "{{ .COMMUNITY_OPERATOR_PATH }}/operators"'
-        msg: "COMMUNITY_OPERATOR_PATH '{{ .COMMUNITY_OPERATOR_PATH }}' is not a community-operators checkout (no operators/ directory)"
+      - sh: 'test -d "{{ .COMMUNITY_OPERATORS_PATH }}/operators"'
+        msg: "COMMUNITY_OPERATORS_PATH '{{ .COMMUNITY_OPERATORS_PATH }}' is not a community-operators checkout (no operators/ directory)"
       - sh: 'test -d {{ printf "%s/manifests" .BUNDLE_DIR | shellQuote }} && test -d {{ printf "%s/metadata" .BUNDLE_DIR | shellQuote }}'
         msg: "BUNDLE_DIR '{{ .BUNDLE_DIR }}' must contain the manifests/ and metadata/ directories"
       - sh: '! test -e {{ .VERSION_DIR | shellQuote }}'
