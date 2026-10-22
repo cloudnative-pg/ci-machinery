@@ -574,6 +574,9 @@ tasks:
       - git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} switch -c {{ .BRANCH | shellQuote }}
       - git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} add -- {{ .OPERATOR_SUBDIR | shellQuote }}
       - git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} commit -s -m {{ .COMMIT_MESSAGE | shellQuote }} -- {{ .OPERATOR_SUBDIR | shellQuote }}
+      # The empty credential.helper resets the helper list, dropping helpers
+      # from lower-priority configs, see
+      # https://git-scm.com/docs/gitcredentials#_configuration_options
       - >
         git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }}
         -c credential.helper=
