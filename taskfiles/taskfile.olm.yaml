@@ -538,6 +538,7 @@ tasks:
       OPERATOR_SUBDIR: 'operators/{{ .OPERATOR_NAME }}'
       BRANCH: 'release-{{ .OPERATOR_NAME }}-{{ .VERSION }}'
       COMMIT_MESSAGE: 'operator {{ .OPERATOR_NAME }} ({{ .VERSION }})'
+      GIT_CREDENTIAL_HELPER: '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
       PR_TEMPLATE: '{{ .COMMUNITY_OPERATOR_PATH }}/docs/pull_request_template.md'
       PR_SCRIPT: |
         set -eu
@@ -573,7 +574,11 @@ tasks:
       - git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} switch -c {{ .BRANCH | shellQuote }}
       - git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} add -- {{ .OPERATOR_SUBDIR | shellQuote }}
       - git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} commit -s -m {{ .COMMIT_MESSAGE | shellQuote }} -- {{ .OPERATOR_SUBDIR | shellQuote }}
-      - git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} push {{ .FORK_REPO_URL | shellQuote }} {{ .BRANCH | shellQuote }}
+      - >
+        git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }}
+        -c credential.helper=
+        -c credential.helper={{ .GIT_CREDENTIAL_HELPER | shellQuote }}
+        push {{ .FORK_REPO_URL | shellQuote }} {{ .BRANCH | shellQuote }}
       - >
         dagger --progress plain core container
         from --address {{ .ALPINE_IMAGE }}
