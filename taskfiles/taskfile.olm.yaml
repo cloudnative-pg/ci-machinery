@@ -505,3 +505,94 @@ tasks:
     cmds:
       - mkdir -p {{ .VERSION_DIR | shellQuote }}
       - cp -R {{ printf "%s/manifests" .BUNDLE_DIR | shellQuote }} {{ printf "%s/metadata" .BUNDLE_DIR | shellQuote }} {{ .VERSION_DIR | shellQuote }}
+
+  operator-hub:pull-request:
+    desc: Open a pull request for a new operator version on community-operators
+    summary: |
+      Automates the process of opening a pull request for a new operator version
+      registered on a local community-operators checkout, to be merged into the upstream
+      https://github.com/k8s-operatorhub/community-operators.
+
+      Requires the GITHUB_TOKEN environment variable to hold a GitHub
+      token allowed to open pull requests on the upstream repository.
+
+      Configurable vars:
+        OPERATOR_NAME            Required. Name of the operator.
+        VERSION                  Required. Version being released, in the
+                                  major.minor.patch format.
+        COMMUNITY_OPERATOR_PATH  Path to the community-operators checkout.
+                                  Default: "community-operators"
+        FORK_REPO_URL            URL of the community-operators fork the
+                                  branch is pushed to.
+                                  Default: "https://github.com/cloudnative-pg/community-operators.git"
+        WORKDIR                  Directory where the task is executed.
+                                  Default: {{ .USER_WORKING_DIR }}
+    deps:
+      - infra:setup-dagger-engine
+    vars:
+      COMMUNITY_OPERATOR_PATH: '{{ .COMMUNITY_OPERATOR_PATH | default "community-operators" }}'
+      FORK_REPO_URL: '{{ .FORK_REPO_URL | default "https://github.com/cloudnative-pg/community-operators.git" }}'
+      FORK_OWNER: '{{ regexReplaceAll "^.*github\\.com[:/]([^/]+)/.*$" .FORK_REPO_URL "${1}" }}'
+      UPSTREAM_REPO: 'k8s-operatorhub/community-operators'
+      UPSTREAM_BRANCH: 'main'
+      OPERATOR_SUBDIR: 'operators/{{ .OPERATOR_NAME }}'
+      BRANCH: 'release-{{ .OPERATOR_NAME }}-{{ .VERSION }}'
+      COMMIT_MESSAGE: 'operator {{ .OPERATOR_NAME }} ({{ .VERSION }})'
+      GIT_CREDENTIAL_HELPER: '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
+      PR_TEMPLATE: '{{ .COMMUNITY_OPERATOR_PATH }}/docs/pull_request_template.md'
+      PR_SCRIPT: |
+        set -eu
+        apk add --quiet --no-cache github-cli
+        sed 's/\[ \]/[x]/g' /pr/template.md > /pr/body.md
+        gh pr create --repo "$PR_REPO" --base "$PR_BASE" --head "$PR_HEAD" \
+          --title "$PR_TITLE" --body-file /pr/body.md
+    env:
+      _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
+    requires:
+      vars:
+        - name: OPERATOR_NAME
+        - name: VERSION
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    preconditions:
+      - sh: 'test -n "${GITHUB_TOKEN:-}"'
+        msg: "The GITHUB_TOKEN environment variable is not set"
+      - sh: 'echo {{ .FORK_OWNER | shellQuote }} | grep -Eq "^[A-Za-z0-9-]+$"'
+        msg: "FORK_REPO_URL '{{ .FORK_REPO_URL }}' is not a GitHub repository URL"
+      - sh: 'test -f {{ .PR_TEMPLATE | shellQuote }}'
+        msg: "Pull request template '{{ .PR_TEMPLATE }}' does not exist"
+      - sh: 'echo {{ .VERSION | shellQuote }} | grep -Eq "^[0-9]+\.[0-9]+\.[0-9]+$"'
+        msg: "VERSION '{{ .VERSION }}' is not in the major.minor.patch format"
+      - sh: 'git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} rev-parse --git-dir >/dev/null 2>&1'
+        msg: "COMMUNITY_OPERATOR_PATH '{{ .COMMUNITY_OPERATOR_PATH }}' is not a git repository"
+      - sh: 'test -d {{ printf "%s/%s/%s" .COMMUNITY_OPERATOR_PATH .OPERATOR_SUBDIR .VERSION | shellQuote }}'
+        msg: "Version directory '{{ .COMMUNITY_OPERATOR_PATH }}/{{ .OPERATOR_SUBDIR }}/{{ .VERSION }}' does not exist"
+      - sh: '! git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} rev-parse --verify --quiet {{ printf "refs/heads/%s" .BRANCH | shellQuote }} >/dev/null'
+        msg: "Branch '{{ .BRANCH }}' already exists in '{{ .COMMUNITY_OPERATOR_PATH }}'"
+      - sh: 'test -n "$(git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} status --porcelain -- {{ .OPERATOR_SUBDIR | shellQuote }})"'
+        msg: "No changes to commit in '{{ .COMMUNITY_OPERATOR_PATH }}/{{ .OPERATOR_SUBDIR }}'"
+    cmds:
+      - git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} switch -c {{ .BRANCH | shellQuote }}
+      - git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} add -- {{ .OPERATOR_SUBDIR | shellQuote }}
+      - git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} commit -s -m {{ .COMMIT_MESSAGE | shellQuote }} -- {{ .OPERATOR_SUBDIR | shellQuote }}
+      # The empty credential.helper resets the helper list, dropping helpers
+      # from lower-priority configs, see
+      # https://git-scm.com/docs/gitcredentials#_configuration_options
+      - >
+        git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }}
+        -c credential.helper=
+        -c credential.helper={{ .GIT_CREDENTIAL_HELPER | shellQuote }}
+        push {{ .FORK_REPO_URL | shellQuote }} {{ .BRANCH | shellQuote }}
+      - >
+        dagger --progress plain core container
+        from --address {{ .ALPINE_IMAGE }}
+        with-mounted-file --path /pr/template.md --source {{ .PR_TEMPLATE | shellQuote }}
+        with-new-file --path /pr/open.sh --contents={{ .PR_SCRIPT | shellQuote }}
+        with-env-variable --name=PR_REPO --value={{ .UPSTREAM_REPO }}
+        with-env-variable --name=PR_TITLE --value={{ .COMMIT_MESSAGE | shellQuote }}
+        with-env-variable --name=PR_HEAD --value={{ printf "%s:%s" .FORK_OWNER .BRANCH | shellQuote }}
+        with-env-variable --name=PR_BASE --value={{ .UPSTREAM_BRANCH }}
+        with-env-variable --name=GH_PROMPT_DISABLED --value=1
+        with-env-variable --name=CACHE_BUSTER --value="$(date)"
+        with-secret-variable --name=GH_TOKEN --secret=env://GITHUB_TOKEN
+        with-exec --args=sh --args=/pr/open.sh
+        stdout
