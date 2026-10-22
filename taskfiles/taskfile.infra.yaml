@@ -200,6 +200,7 @@ tasks:
         EOF
         done
       - task: setup-kind-credentials
+        if: '{{ if and .PRIVATE_REGISTRY_HOST .PRIVATE_REGISTRY_USERNAME .PRIVATE_REGISTRY_PASSWORD }}true{{ else }}false{{ end }}'
         vars:
           CLUSTER_NAME: '{{ .CLUSTER_NAME }}'
           PRIVATE_REGISTRY_HOST: '{{ .PRIVATE_REGISTRY_HOST }}'
@@ -214,29 +215,30 @@ tasks:
     summary: |
       Writes the credentials of a private registry to
       /var/lib/kubelet/config.json on every node, so pods can pull from it
-      without imagePullSecrets. Does nothing unless all three variables are
-      set. Entries are merged: run once per registry, or again to refresh.
+      without imagePullSecrets. All three variables are required.
+      Entries are merged: run once per registry, or again to refresh.
 
       Variables:
         CLUSTER_NAME               Name of the cluster
                                    (default: cnpg-<k8s_version>).
         PRIVATE_REGISTRY_HOST      Registry to authenticate to, e.g. ghcr.io.
         PRIVATE_REGISTRY_USERNAME  Username for the registry.
-        PRIVATE_REGISTRY_PASSWORD  Password or token (environment variable).
+
+      Environment variables:
+        PRIVATE_REGISTRY_PASSWORD  Password or token.
     vars:
       K8S_VERSION: '{{ regexReplaceAll "^v([0-9.]+).*" .KIND_NODE_TAG "$1" }}'
       CLUSTER_NAME: '{{ .CLUSTER_NAME | default (printf "cnpg-%s" .K8S_VERSION) }}'
+    preconditions:
+      - sh: 'test -n "{{ .PRIVATE_REGISTRY_HOST }}"'
+        msg: "PRIVATE_REGISTRY_HOST variable must be set"
+      - sh: 'test -n "{{ .PRIVATE_REGISTRY_USERNAME }}"'
+        msg: "PRIVATE_REGISTRY_USERNAME variable must be set"
+      - sh: 'test -n "${PRIVATE_REGISTRY_PASSWORD}"'
+        msg: "PRIVATE_REGISTRY_PASSWORD environment variable must be set"
     cmds:
       - |
         set -e
-        # Nothing set: nothing to do. Partially set: warn, but do not fail the setup.
-        if [ -z "{{ .PRIVATE_REGISTRY_HOST }}{{ .PRIVATE_REGISTRY_USERNAME }}${PRIVATE_REGISTRY_PASSWORD}" ]; then
-          exit 0
-        fi
-        if [ -z "{{ .PRIVATE_REGISTRY_HOST }}" ] || [ -z "{{ .PRIVATE_REGISTRY_USERNAME }}" ] || [ -z "${PRIVATE_REGISTRY_PASSWORD}" ]; then
-          echo "warning: PRIVATE_REGISTRY_HOST, PRIVATE_REGISTRY_USERNAME and PRIVATE_REGISTRY_PASSWORD must all be set, skipping registry credentials" >&2
-          exit 0
-        fi
         nodes=$(docker ps -q --filter "label=io.x-k8s.kind.cluster={{ .CLUSTER_NAME }}")
         if [ -z "${nodes}" ]; then
           echo "error: no nodes found for cluster {{ .CLUSTER_NAME }}" >&2
@@ -253,17 +255,12 @@ tasks:
               file=/var/lib/kubelet/config.json
               mkdir -p /var/lib/kubelet
               [ -f "${file}" ] || echo "{}" > "${file}"
-              if jq -e --arg host "${HOST}" ".auths[\$host]" "${file}" >/dev/null; then
-                action=updated
-              else
-                action=added
-              fi
               auth=$(printf "%s:%s" "${USERNAME}" "$(cat)" | base64 -w0)
               # Add or replace the entry for this host only, then swap the file in
               # so the kubelet never reads a partial one.
               jq --arg host "${HOST}" --arg auth "${auth}" ".auths[\$host] = {auth: \$auth}" "${file}" > "${file}.tmp"
               mv "${file}.tmp" "${file}"
-              echo "${action} credentials for ${HOST} on $(hostname)"
+              echo "set credentials for ${HOST} on $(hostname)"
             '
         done
 
