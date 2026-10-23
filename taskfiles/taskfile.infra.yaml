@@ -130,7 +130,7 @@ tasks:
       - setup-docker-network
     vars:
       # renovate: datasource=github-tags depName=dagger/dagger versioning=semver
-      DAGGER_ENGINE_VERSION: v0.21.10
+      DAGGER_ENGINE_VERSION: v0.21.11
     cmds:
       - >
         docker run -d -v /var/lib/dagger
