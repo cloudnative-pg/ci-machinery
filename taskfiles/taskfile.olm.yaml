@@ -14,7 +14,7 @@ vars:
   # renovate: datasource=docker depName=alpine/kubectl versioning=docker
   KUBECTL_VERSION: 1.37.1@sha256:8c72f6f732ce7ef11cdb1bea25faa4f4a521872a12c89e3f40ba9edb52a4d4f2
   # renovate: datasource=git-refs depName=https://github.com/redhat-openshift-ecosystem/community-operators-pipeline.git versioning=git currentValue=ci/latest
-  OPP_SCRIPT_VERSION: "8ed9daf65b35a6ed456fb02cc0fccac2519c4ba8"
+  OPP_SCRIPT_SHA: "06c8c50c3e7f60e155595ccc66764aa526e674fc"
   REGISTRY_CA_VOLUME: '{{ .REGISTRY_CA_VOLUME | default "cnpg-registry-tls" }}'
   REGISTRY_CA_PEM:
     sh: docker volume inspect {{ .REGISTRY_CA_VOLUME }} >/dev/null 2>&1 && docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro busybox:{{ .BUSYBOX_VERSION }} cat /certs/ca.pem 2>/dev/null || true
@@ -290,7 +290,7 @@ tasks:
     desc: Run the OperatorHub fruit tests (kiwi, lemon, orange) against an OLM bundle
     summary: |
       Downloads the OperatorHub pipeline script (opp.sh), pinned to
-      OPP_SCRIPT_VERSION, and runs the kiwi, lemon and orange tests
+      OPP_SCRIPT_SHA, and runs the kiwi, lemon and orange tests
       against a bundle.
       See https://k8s-operatorhub.github.io/community-operators/operator-test-suite/
 
@@ -309,7 +309,7 @@ tasks:
     vars:
       OPP_PRODUCTION_TYPE: '{{ .OPP_PRODUCTION_TYPE | default "k8s" }}'
       OPP_SCRIPT:
-        sh: mktemp
+        sh: mktemp -u
     env:
       OPP_DEBUG: 1
       OPP_PRODUCTION_TYPE: '{{ .OPP_PRODUCTION_TYPE }}'
@@ -335,7 +335,7 @@ tasks:
       - |
         if [ -n "${GITHUB_TOKEN:-}" ]; then set -- -H "Authorization: Bearer ${GITHUB_TOKEN}"; else set --; fi
         curl "$@" --retry 5 --retry-delay 2 -fsSL -o {{ .OPP_SCRIPT | shellQuote }} \
-          "https://raw.githubusercontent.com/redhat-openshift-ecosystem/community-operators-pipeline/{{ .OPP_SCRIPT_VERSION }}/ci/scripts/opp.sh"
+          "https://raw.githubusercontent.com/redhat-openshift-ecosystem/community-operators-pipeline/{{ .OPP_SCRIPT_SHA }}/ci/scripts/opp.sh"
       - bash {{ .OPP_SCRIPT | shellQuote }} kiwi,lemon,orange {{ .BUNDLE_PATH | shellQuote }}
 
   catalog:generate:
