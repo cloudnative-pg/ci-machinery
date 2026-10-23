@@ -190,12 +190,12 @@ tasks:
     desc: Run the Scorecard tests against the OLM bundle image via operator-sdk
     summary: |
       Runs `operator-sdk scorecard` against the bundle image on the
-      Kubernetes cluster referenced by KUBECONFIG_FILE. The bundle must
+      Kubernetes cluster referenced by KUBECONFIG_PATH. The bundle must
       ship a Scorecard configuration (tests/scorecard/config.yaml).
 
       Configurable vars:
         BUNDLE_IMAGE     Required. The bundle image.
-        KUBECONFIG_FILE  Required. Path to the kubeconfig of the target
+        KUBECONFIG_PATH  Required. Path to the kubeconfig of the target
                           cluster, relative to WORKDIR.
         EXTRA_ARGS       Additional raw arguments appended to
                           `operator-sdk scorecard`.
@@ -212,12 +212,12 @@ tasks:
     requires:
       vars:
         - name: BUNDLE_IMAGE
-        - name: KUBECONFIG_FILE
+        - name: KUBECONFIG_PATH
     dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     run: when_changed
     preconditions:
-      - sh: 'test -f "{{ .KUBECONFIG_FILE }}"'
-        msg: "KUBECONFIG_FILE '{{ .KUBECONFIG_FILE }}' does not exist"
+      - sh: 'test -f "{{ .KUBECONFIG_PATH }}"'
+        msg: "KUBECONFIG_PATH '{{ .KUBECONFIG_PATH }}' does not exist"
       - sh: |
           case "{{ .EXTRA_ARGS }}" in
             *--kubeconfig*) exit 1 ;;
@@ -228,7 +228,7 @@ tasks:
         dagger --progress plain core container
         from --address quay.io/operator-framework/operator-sdk:{{ .OPERATOR_SDK_IMAGE_VERSION }}
         {{ .RHEL_CA_TRUST_STEP }}
-        with-mounted-file --path /kubeconfig --source {{ .KUBECONFIG_FILE | shellQuote }}
+        with-mounted-file --path /kubeconfig --source {{ .KUBECONFIG_PATH | shellQuote }}
         with-env-variable --name=CACHE_BUSTER --value="$(date)"
         with-exec
         --args=sh --args=-c
