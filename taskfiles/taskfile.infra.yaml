@@ -18,6 +18,8 @@ vars:
   KIND_VERSION: v0.33.0
   # renovate: datasource=docker depName=kindest/node versioning=docker
   KIND_NODE_TAG: v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+  # renovate: datasource=docker depName=alpine/kubectl versioning=docker
+  KUBECTL_IMAGE: alpine/kubectl:1.37.1@sha256:8c72f6f732ce7ef11cdb1bea25faa4f4a521872a12c89e3f40ba9edb52a4d4f2
 
   DOCKER_SOCKET:
     sh: docker context inspect -f {{`'{{json .Endpoints.docker.Host}}'`}} $(docker context show)
@@ -300,52 +302,65 @@ tasks:
             '
         done
 
-  install-cnpg:
-    desc: Install the CloudNativePG operator in a Kind cluster
+  setup-cnpg:
+    desc: Install the CloudNativePG operator in a Kubernetes cluster
     summary: |
-      Installs the CloudNativePG operator in the Kind cluster identified by
-      CLUSTER_NAME, creating the cluster if needed, and waits for the
-      operator to become available. Skipped if the operator is already
-      installed.
+      Installs the CloudNativePG operator in the Kubernetes cluster
+      referenced by KUBECONFIG_PATH.
 
       Variables:
-        CLUSTER_NAME  Name of the cluster (default: cnpg-<k8s_version>).
-        NODES         Passed to setup-kind (default: 1).
-        KIND_NODE_TAG Passed to setup-kind (default: KIND_NODE_TAG).
-        CNPG_RELEASE  CloudNativePG release, either 'main' or a full
-                      version like 1.30.1 (default: CNPG_RELEASE_DEFAULT).
+        CNPG_RELEASE     CloudNativePG release, either 'main', a full
+                         version like 1.30.1 or a release candidate like
+                         1.30.0-rc1.
+                         (default: CNPG_RELEASE_DEFAULT).
+        KUBECONFIG_PATH  Required. Path of the kubeconfig file of the
+                         cluster to install the operator in.
+        WORKDIR          Directory where the task is executed.
+                         Default: {{ .USER_WORKING_DIR }}
     deps:
-      - task: setup-kind
-        vars:
-          CLUSTER_NAME: '{{ .CLUSTER_NAME }}'
-          NODES: '{{ .NODES }}'
-          KIND_NODE_TAG: '{{ .KIND_NODE_TAG }}'
+      - setup-dagger-engine
     run: when_changed
     vars:
       # renovate: datasource=github-tags depName=cloudnative-pg/cloudnative-pg versioning=semver-coerced extractVersion=^v(?<version>\d+\.\d+\.\d+)$
       CNPG_RELEASE_DEFAULT: 1.30.1
-      K8S_VERSION: '{{ regexReplaceAll "^v([0-9.]+).*" .KIND_NODE_TAG "$1" }}'
-      CLUSTER_NAME: '{{ .CLUSTER_NAME | default (printf "cnpg-%s" .K8S_VERSION) }}'
       CNPG_RELEASE: '{{ .CNPG_RELEASE | default .CNPG_RELEASE_DEFAULT }}'
       CNPG_MANIFEST:
         sh: |
           release="{{ .CNPG_RELEASE }}"
+          release="${release#v}"
           if [ "${release}" = "main" ]; then
             echo "https://raw.githubusercontent.com/cloudnative-pg/artifacts/main/manifests/operator-manifest.yaml"
-          elif echo "${release}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-${release%.*}/releases/cnpg-${release}.yaml"
+          elif echo "${release}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$'; then
+            echo "https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/v${release}/releases/cnpg-${release}.yaml"
           else
-            echo "CNPG_RELEASE must be 'main' or a full version like 1.30.1, got '${release}'" >&2
+            echo "CNPG_RELEASE must be 'main', a full version like 1.30.1 or a release candidate like 1.30.0-rc1, got '{{ .CNPG_RELEASE }}'" >&2
             exit 1
           fi
-      # Use the kubectl shipped in the node: the Dagger engine's DNS cannot
-      # resolve dotless hostnames such as <cluster>-control-plane
-      KUBECTL: docker exec {{ .CLUSTER_NAME }}-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf
+      KUBECTL_TOOLBOX: >-
+        dagger --progress plain core container
+        from --address {{ .KUBECTL_IMAGE }}
+        with-mounted-file --path /root/.kube/config --source {{ .KUBECONFIG_PATH | shellQuote }}
+        with-env-variable --name=CACHE_BUSTER --value="$(date)"
+    env:
+      _EXPERIMENTAL_DAGGER_RUNNER_HOST: container://{{ .DAGGER_ENGINE }}
+    requires:
+      vars:
+        - name: KUBECONFIG_PATH
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    preconditions:
+      - sh: 'test -f {{ .KUBECONFIG_PATH | shellQuote }}'
+        msg: "KUBECONFIG_PATH '{{ .KUBECONFIG_PATH }}' does not exist"
     cmds:
-      - '{{ .KUBECTL }} apply --server-side -f {{ .CNPG_MANIFEST }}'
-      - '{{ .KUBECTL }} wait --for=condition=Available --timeout=2m -n cnpg-system deployments cnpg-controller-manager'
+      - >
+        {{ .KUBECTL_TOOLBOX }}
+        with-exec --args=apply,--server-side,-f,{{ .CNPG_MANIFEST }} --use-entrypoint
+        with-exec --args=wait,--for=condition=Available,--timeout=2m,-n,cnpg-system,deployments/cnpg-controller-manager --use-entrypoint
+        sync
     status:
-      - '{{ .KUBECTL }} get -n cnpg-system deployments cnpg-controller-manager'
+      - >
+        {{ .KUBECTL_TOOLBOX }}
+        with-exec --args=get,-n,cnpg-system,deployments/cnpg-controller-manager --use-entrypoint
+        sync
 
   teardown:
     desc: Teardown the resources created by the tasks
