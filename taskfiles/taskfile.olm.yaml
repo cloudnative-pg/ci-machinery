@@ -261,6 +261,8 @@ tasks:
         - name: BUNDLE_IMAGE
         - name: PACKAGE_NAME
         - name: KUBECONFIG_PATH
+        - name: SKIP_DELETE
+          enum: ["true", "false"]
     dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     cmds:
       - defer: rm -rf {{ .CATALOG_DIR | shellQuote }}

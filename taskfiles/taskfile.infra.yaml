@@ -220,11 +220,11 @@ tasks:
       Variables:
         CLUSTER_NAME     Name of the cluster (default: cnpg-<k8s_version>).
         KUBECONFIG_PATH  Required. File the kubeconfig is written to.
-                         Its parent directory is created.
-        INTERNAL         "true" to use the internal address of the API
-                         server
+                          Its parent directory is created.
+        INTERNAL         When "true", use the internal address of the API
+                          server. Default: "false"
         WORKDIR          Directory where the task is executed.
-                         Default: {{ .USER_WORKING_DIR }}
+                          Default: {{ .USER_WORKING_DIR }}
     deps:
       - setup-dagger-engine
     vars:
@@ -236,6 +236,8 @@ tasks:
     requires:
       vars:
         - name: KUBECONFIG_PATH
+        - name: INTERNAL
+          enum: ["true", "false"]
     dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     preconditions:
       - sh: >
