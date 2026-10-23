@@ -13,10 +13,13 @@ vars:
   OPM_IMAGE_VERSION: v1.74.0@sha256:b32d3891616662620da08d7f0ec42c2e69fa2de43427dc975d35b12f7a969a0f
   # renovate: datasource=docker depName=alpine/kubectl versioning=docker
   KUBECTL_VERSION: 1.37.1@sha256:8c72f6f732ce7ef11cdb1bea25faa4f4a521872a12c89e3f40ba9edb52a4d4f2
+  # renovate: datasource=git-refs depName=https://github.com/redhat-openshift-ecosystem/community-operators-pipeline.git versioning=git currentValue=ci/latest
+  OPP_SCRIPT_SHA: "06c8c50c3e7f60e155595ccc66764aa526e674fc"
   REGISTRY_CA_VOLUME: '{{ .REGISTRY_CA_VOLUME | default "cnpg-registry-tls" }}'
   REGISTRY_CA_PEM:
     sh: docker volume inspect {{ .REGISTRY_CA_VOLUME }} >/dev/null 2>&1 && docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro busybox:{{ .BUSYBOX_VERSION }} cat /certs/ca.pem 2>/dev/null || true
   RHEL_CA_TRUST_STEP: '{{ if .REGISTRY_CA_PEM }}with-new-file --path /etc/pki/ca-trust/source/anchors/registry-ca.crt --contents={{ .REGISTRY_CA_PEM | shellQuote }} with-exec --args update-ca-trust{{ end }}'
+  VERSION_REGEX: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(rc|dev)[1-9][0-9]*)?$'
 
 tasks:
   bundle:generate:
@@ -283,6 +286,58 @@ tasks:
           KUBECONFIG_PATH: '{{ .KUBECONFIG_PATH }}'
           WORKDIR: '{{ .WORKDIR }}'
 
+  bundle:fruit-tests:
+    desc: Run the OperatorHub fruit tests (kiwi, lemon, orange) against an OLM bundle
+    summary: |
+      Downloads the OperatorHub pipeline script (opp.sh), pinned to
+      OPP_SCRIPT_SHA, and runs the kiwi, lemon and orange tests
+      against a bundle.
+      See https://k8s-operatorhub.github.io/community-operators/operator-test-suite/
+
+      This task only runs inside a GitHub Actions runner:
+      opp.sh changes the machine it runs on, so it should only be executed
+      in ephemeral environments.
+
+      Configurable vars:
+        BUNDLE_PATH          Required. Path to the bundle directory, laid
+                              out as `<dir>/operators/<OPERATOR_NAME>/<VERSION>`,
+                              e.g. in the checkout prepared by `operator-hub:add`.
+        OPP_PRODUCTION_TYPE  Target platform of the tests: "k8s", "ocp"
+                              or "okd". Default: "k8s"
+        WORKDIR              Directory where the task is executed.
+                              Default: {{ .USER_WORKING_DIR }}
+    vars:
+      OPP_PRODUCTION_TYPE: '{{ .OPP_PRODUCTION_TYPE | default "k8s" }}'
+      OPP_SCRIPT:
+        sh: mktemp -u
+    env:
+      OPP_DEBUG: 1
+      OPP_PRODUCTION_TYPE: '{{ .OPP_PRODUCTION_TYPE }}'
+      OPP_CONTAINER_OPT: -t
+      OPP_AUTO_PACKAGEMANIFEST_CLUSTER_VERSION_LABEL: 1
+      OPP_RELEASE_INDEX_NAME: catalog_tmp
+    requires:
+      vars:
+        - name: BUNDLE_PATH
+        - name: OPP_PRODUCTION_TYPE
+          enum: [ k8s, ocp, okd ]
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    preconditions:
+      - sh: '[ "${GITHUB_ACTIONS:-}" = "true" ]'
+        msg: "bundle:fruit-tests only runs inside a GitHub Actions runner: opp.sh modifies the host it runs on"
+      - sh: 'test -d {{ printf "%s/manifests" .BUNDLE_PATH | shellQuote }} && test -d {{ printf "%s/metadata" .BUNDLE_PATH | shellQuote }}'
+        msg: "BUNDLE_PATH '{{ .BUNDLE_PATH }}' must contain the manifests/ and metadata/ directories"
+      # opp.sh takes the operator name and version from the path
+      - sh: 'test "$(basename "$(dirname "$(dirname "$(readlink -f {{ .BUNDLE_PATH | shellQuote }})")")")" = operators'
+        msg: "BUNDLE_PATH '{{ .BUNDLE_PATH }}' must be laid out as <dir>/operators/<OPERATOR_NAME>/<VERSION>"
+    cmds:
+      - defer: rm -f {{ .OPP_SCRIPT | shellQuote }}
+      - |
+        if [ -n "${GITHUB_TOKEN:-}" ]; then set -- -H "Authorization: Bearer ${GITHUB_TOKEN}"; else set --; fi
+        curl "$@" --retry 5 --retry-delay 2 -fsSL -o {{ .OPP_SCRIPT | shellQuote }} \
+          "https://raw.githubusercontent.com/redhat-openshift-ecosystem/community-operators-pipeline/{{ .OPP_SCRIPT_SHA }}/ci/scripts/opp.sh"
+      - bash {{ .OPP_SCRIPT | shellQuote }} kiwi,lemon,orange {{ .BUNDLE_PATH | shellQuote }}
+
   catalog:generate:
     desc: Generate an ephemeral OLM catalog containing only the bundle
     internal: true
@@ -474,8 +529,10 @@ tasks:
 
       Configurable vars:
         OPERATOR_NAME            Required. Name of the operator.
-        VERSION                  Required. Bundle version, in the
-                                  major.minor.patch format.
+        VERSION                  Required. Bundle version, as a release
+                                  (major.minor.patch), a release
+                                  candidate (major.minor.patch-rcN) or a
+                                  development build (major.minor.patch-devN).
         BUNDLE_DIR               Directory containing the bundle
                                   `manifests/` and `metadata/` directories.
                                   Default: "olm-bundle/bundle"
@@ -494,8 +551,8 @@ tasks:
         - name: VERSION
     dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     preconditions:
-      - sh: 'echo {{ .VERSION | shellQuote }} | grep -Eq "^[0-9]+\.[0-9]+\.[0-9]+$"'
-        msg: "VERSION '{{ .VERSION }}' is not in the major.minor.patch format"
+      - sh: 'echo {{ .VERSION | shellQuote }} | grep -Eq {{ .VERSION_REGEX | shellQuote }}'
+        msg: "VERSION '{{ .VERSION }}' must be a release (major.minor.patch), a release candidate (major.minor.patch-rcN) or a development build (major.minor.patch-devN)"
       - sh: 'test -d "{{ .COMMUNITY_OPERATORS_PATH }}/operators"'
         msg: "COMMUNITY_OPERATORS_PATH '{{ .COMMUNITY_OPERATORS_PATH }}' is not a community-operators checkout (no operators/ directory)"
       - sh: 'test -d {{ printf "%s/manifests" .BUNDLE_DIR | shellQuote }} && test -d {{ printf "%s/metadata" .BUNDLE_DIR | shellQuote }}'
@@ -596,3 +653,56 @@ tasks:
         with-secret-variable --name=GH_TOKEN --secret=env://GITHUB_TOKEN
         with-exec --args=sh --args=/pr/open.sh
         stdout
+
+  operator-hub:fruit-tests:
+    desc: Run the OperatorHub fruit tests against a bundle
+    summary: |
+      Runs the OperatorHub fruit tests (kiwi, lemon, orange) against the
+      bundle.
+      See https://k8s-operatorhub.github.io/community-operators/operator-test-suite/
+
+      Configurable vars:
+        OPERATOR_NAME  Required. Name of the operator.
+        VERSION        Required. Bundle version, as a release
+                        (major.minor.patch), a release candidate
+                        (major.minor.patch-rcN) or a development build
+                        (major.minor.patch-devN).
+        BUNDLE_DIR     Directory containing the bundle `manifests/` and
+                        `metadata/` directories.
+                        Default: "olm-bundle/bundle"
+        WORKDIR        Directory where the task is executed.
+                        Default: {{ .USER_WORKING_DIR }}
+    vars:
+      BUNDLE_DIR: '{{ .BUNDLE_DIR | default "olm-bundle/bundle" }}'
+      TMP_DIR:
+        sh: mktemp -d -u
+      COMMUNITY_OPERATORS_PATH: '{{ .TMP_DIR }}/community-operators'
+    requires:
+      vars:
+        - name: OPERATOR_NAME
+        - name: VERSION
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    preconditions:
+      - sh: '[ "${GITHUB_ACTIONS:-}" = "true" ]'
+        msg: "operator-hub:fruit-tests only runs inside a GitHub Actions runner: opp.sh modifies the host it runs on"
+      - sh: 'echo {{ .VERSION | shellQuote }} | grep -Eq {{ .VERSION_REGEX | shellQuote }}'
+        msg: "VERSION '{{ .VERSION }}' must be a release (major.minor.patch), a release candidate (major.minor.patch-rcN) or a development build (major.minor.patch-devN)"
+      - sh: 'test -d {{ printf "%s/manifests" .BUNDLE_DIR | shellQuote }} && test -d {{ printf "%s/metadata" .BUNDLE_DIR | shellQuote }}'
+        msg: "BUNDLE_DIR '{{ .BUNDLE_DIR }}' must contain the manifests/ and metadata/ directories"
+    cmds:
+      - defer: rm -rf {{ .TMP_DIR | shellQuote }}
+      - task: operator-hub:clone
+        vars:
+          COMMUNITY_OPERATORS_PATH: '{{ .COMMUNITY_OPERATORS_PATH }}'
+          WORKDIR: '{{ .WORKDIR }}'
+      - task: operator-hub:add
+        vars:
+          OPERATOR_NAME: '{{ .OPERATOR_NAME }}'
+          VERSION: '{{ .VERSION }}'
+          BUNDLE_DIR: '{{ .BUNDLE_DIR }}'
+          COMMUNITY_OPERATORS_PATH: '{{ .COMMUNITY_OPERATORS_PATH }}'
+          WORKDIR: '{{ .WORKDIR }}'
+      - task: bundle:fruit-tests
+        vars:
+          BUNDLE_PATH: '{{ .COMMUNITY_OPERATORS_PATH }}/operators/{{ .OPERATOR_NAME }}/{{ .VERSION }}'
+          WORKDIR: '{{ .WORKDIR }}'
