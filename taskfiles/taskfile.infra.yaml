@@ -229,13 +229,13 @@ tasks:
     vars:
       K8S_VERSION: '{{ regexReplaceAll "^v([0-9.]+).*" .KIND_NODE_TAG "$1" }}'
       CLUSTER_NAME: '{{ .CLUSTER_NAME | default (printf "cnpg-%s" .K8S_VERSION) }}'
+    requires:
+      vars:
+        - name: PRIVATE_REGISTRY_HOST
+        - name: PRIVATE_REGISTRY_USERNAME
     preconditions:
-      - sh: 'test -n "{{ .PRIVATE_REGISTRY_HOST }}"'
-        msg: "PRIVATE_REGISTRY_HOST variable must be set"
-      - sh: 'test -n "{{ .PRIVATE_REGISTRY_USERNAME }}"'
-        msg: "PRIVATE_REGISTRY_USERNAME variable must be set"
       - sh: 'test -n "${PRIVATE_REGISTRY_PASSWORD}"'
-        msg: "PRIVATE_REGISTRY_PASSWORD environment variable must be set"
+        msg: "PRIVATE_REGISTRY_PASSWORD environment variable must be set and non-empty"
     cmds:
       - |
         set -e
