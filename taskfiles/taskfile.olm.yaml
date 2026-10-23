@@ -385,6 +385,45 @@ tasks:
         with-exec --args=olm,status --use-entrypoint
         sync
 
+  teardown-olm:
+    desc: Uninstall OLM from a Kubernetes cluster via operator-sdk
+    summary: |
+      Runs `operator-sdk olm uninstall` against the Kubernetes cluster
+      referenced by KUBECONFIG_PATH.
+
+      Configurable vars:
+        KUBECONFIG_PATH  Required. Path of the kubeconfig file of the
+                          cluster to uninstall OLM from.
+        EXTRA_ARGS       Additional raw arguments appended to
+                          `operator-sdk olm uninstall`.
+                          Example: `--version=0.28.0 --timeout=5m`.
+                          Default: ""
+        WORKDIR          Directory where the task is executed.
+                          Default: {{ .USER_WORKING_DIR }}
+    deps:
+      - infra:setup-dagger-engine
+    vars:
+      EXTRA_ARGS: '{{ .EXTRA_ARGS | default "" }}'
+    env:
+      _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
+    requires:
+      vars:
+        - name: KUBECONFIG_PATH
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    preconditions:
+      - sh: 'test -f "{{ .KUBECONFIG_PATH }}"'
+        msg: "KUBECONFIG_PATH '{{ .KUBECONFIG_PATH }}' does not exist"
+    cmds:
+      - >
+        dagger --progress plain core container
+        from --address quay.io/operator-framework/operator-sdk:{{ .OPERATOR_SDK_IMAGE_VERSION }}
+        with-mounted-file --path /root/.kube/config --source {{ .KUBECONFIG_PATH | shellQuote }}
+        with-env-variable --name=CACHE_BUSTER --value="$(date)"
+        with-exec
+        --args=sh --args=-c
+        --args={{ printf "operator-sdk olm uninstall %s" .EXTRA_ARGS | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
+        stdout
+
   catalog:generate:
     desc: Generate an ephemeral OLM catalog containing only the bundle
     internal: true
