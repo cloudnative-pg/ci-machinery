@@ -19,6 +19,7 @@ vars:
   REGISTRY_CA_PEM:
     sh: docker volume inspect {{ .REGISTRY_CA_VOLUME }} >/dev/null 2>&1 && docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro busybox:{{ .BUSYBOX_VERSION }} cat /certs/ca.pem 2>/dev/null || true
   RHEL_CA_TRUST_STEP: '{{ if .REGISTRY_CA_PEM }}with-new-file --path /etc/pki/ca-trust/source/anchors/registry-ca.crt --contents={{ .REGISTRY_CA_PEM | shellQuote }} with-exec --args update-ca-trust{{ end }}'
+  VERSION_REGEX: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(rc|dev)[1-9][0-9]*)?$'
 
 tasks:
   bundle:generate:
@@ -528,8 +529,10 @@ tasks:
 
       Configurable vars:
         OPERATOR_NAME            Required. Name of the operator.
-        VERSION                  Required. Bundle version, in the
-                                  major.minor.patch format.
+        VERSION                  Required. Bundle version, as a release
+                                  (major.minor.patch), a release
+                                  candidate (major.minor.patch-rcN) or a
+                                  development build (major.minor.patch-devN).
         BUNDLE_DIR               Directory containing the bundle
                                   `manifests/` and `metadata/` directories.
                                   Default: "olm-bundle/bundle"
@@ -548,8 +551,8 @@ tasks:
         - name: VERSION
     dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     preconditions:
-      - sh: 'echo {{ .VERSION | shellQuote }} | grep -Eq "^[0-9]+\.[0-9]+\.[0-9]+$"'
-        msg: "VERSION '{{ .VERSION }}' is not in the major.minor.patch format"
+      - sh: 'echo {{ .VERSION | shellQuote }} | grep -Eq {{ .VERSION_REGEX | shellQuote }}'
+        msg: "VERSION '{{ .VERSION }}' must be a release (major.minor.patch), a release candidate (major.minor.patch-rcN) or a development build (major.minor.patch-devN)"
       - sh: 'test -d "{{ .COMMUNITY_OPERATORS_PATH }}/operators"'
         msg: "COMMUNITY_OPERATORS_PATH '{{ .COMMUNITY_OPERATORS_PATH }}' is not a community-operators checkout (no operators/ directory)"
       - sh: 'test -d {{ printf "%s/manifests" .BUNDLE_DIR | shellQuote }} && test -d {{ printf "%s/metadata" .BUNDLE_DIR | shellQuote }}'
@@ -660,8 +663,10 @@ tasks:
 
       Configurable vars:
         OPERATOR_NAME  Required. Name of the operator.
-        VERSION        Required. Bundle version, in the major.minor.patch
-                        format.
+        VERSION        Required. Bundle version, as a release
+                        (major.minor.patch), a release candidate
+                        (major.minor.patch-rcN) or a development build
+                        (major.minor.patch-devN).
         BUNDLE_DIR     Directory containing the bundle `manifests/` and
                         `metadata/` directories.
                         Default: "olm-bundle/bundle"
@@ -679,6 +684,8 @@ tasks:
     preconditions:
       - sh: '[ "${GITHUB_ACTIONS:-}" = "true" ]'
         msg: "operator-hub:fruit-tests only runs inside a GitHub Actions runner: opp.sh modifies the host it runs on"
+      - sh: 'echo {{ .VERSION | shellQuote }} | grep -Eq {{ .VERSION_REGEX | shellQuote }}'
+        msg: "VERSION '{{ .VERSION }}' must be a release (major.minor.patch), a release candidate (major.minor.patch-rcN) or a development build (major.minor.patch-devN)"
     cmds:
       - defer: rm -rf {{ .TMP_DIR | shellQuote }}
       - task: operator-hub:clone
