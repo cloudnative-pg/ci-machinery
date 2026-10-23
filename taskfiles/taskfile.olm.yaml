@@ -340,7 +340,7 @@ tasks:
           "https://raw.githubusercontent.com/redhat-openshift-ecosystem/community-operators-pipeline/{{ .OPP_SCRIPT_SHA }}/ci/scripts/opp.sh"
       - bash {{ .OPP_SCRIPT | shellQuote }} kiwi,lemon,orange {{ .BUNDLE_PATH | shellQuote }}
 
-  setup-olm:
+  olm-operator:setup:
     desc: Install OLM on a Kubernetes cluster via operator-sdk
     summary: |
       Runs `operator-sdk olm install` against the Kubernetes cluster
@@ -387,7 +387,7 @@ tasks:
         with-exec --args=olm,status --use-entrypoint
         sync
 
-  teardown-olm:
+  olm-operator:teardown:
     desc: Uninstall OLM from a Kubernetes cluster via operator-sdk
     summary: |
       Runs `operator-sdk olm uninstall` against the Kubernetes cluster
