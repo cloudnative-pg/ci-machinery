@@ -681,11 +681,14 @@ tasks:
       vars:
         - name: OPERATOR_NAME
         - name: VERSION
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     preconditions:
       - sh: '[ "${GITHUB_ACTIONS:-}" = "true" ]'
         msg: "operator-hub:fruit-tests only runs inside a GitHub Actions runner: opp.sh modifies the host it runs on"
       - sh: 'echo {{ .VERSION | shellQuote }} | grep -Eq {{ .VERSION_REGEX | shellQuote }}'
         msg: "VERSION '{{ .VERSION }}' must be a release (major.minor.patch), a release candidate (major.minor.patch-rcN) or a development build (major.minor.patch-devN)"
+      - sh: 'test -d {{ printf "%s/manifests" .BUNDLE_DIR | shellQuote }} && test -d {{ printf "%s/metadata" .BUNDLE_DIR | shellQuote }}'
+        msg: "BUNDLE_DIR '{{ .BUNDLE_DIR }}' must contain the manifests/ and metadata/ directories"
     cmds:
       - defer: rm -rf {{ .TMP_DIR | shellQuote }}
       - task: operator-hub:clone
