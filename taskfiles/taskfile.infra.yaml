@@ -210,6 +210,42 @@ tasks:
         test "$({{ .KIND_TOOLBOX }}
         with-exec --args="sh","-c","kind get clusters 2>/dev/null | grep -qx {{ .CLUSTER_NAME }} && echo true || echo false" stdout)" = "true"
 
+  export-kubeconfig:
+    desc: Export the kubeconfig of the Kind cluster to KUBECONFIG_PATH
+    summary: |
+      Writes the kubeconfig of the Kind cluster created by setup-kind to
+      KUBECONFIG_PATH, so other tasks can reach the cluster. Fails if the
+      cluster does not exist.
+
+      Variables:
+        CLUSTER_NAME     Name of the cluster (default: cnpg-<k8s_version>).
+        KUBECONFIG_PATH  Required. File the kubeconfig is written to.
+                         Its parent directory is created.
+        INTERNAL         "true" to use the internal address of the API
+                         server
+    deps:
+      - setup-dagger-engine
+    vars:
+      K8S_VERSION: '{{ regexReplaceAll "^v([0-9.]+).*" .KIND_NODE_TAG "$1" }}'
+      CLUSTER_NAME: '{{ .CLUSTER_NAME | default (printf "cnpg-%s" .K8S_VERSION) }}'
+      INTERNAL: '{{ .INTERNAL | default "false" }}'
+    env:
+      _EXPERIMENTAL_DAGGER_RUNNER_HOST: container://{{ .DAGGER_ENGINE }}
+    requires:
+      vars:
+        - name: KUBECONFIG_PATH
+    preconditions:
+      - sh: >
+          test "$( {{ .KIND_TOOLBOX }}
+          with-exec --args="sh","-c","kind get clusters 2>/dev/null | grep -qx {{ .CLUSTER_NAME }} && echo true || echo false" stdout)" = "true"
+        msg: "Kind cluster '{{ .CLUSTER_NAME }}' not found"
+    cmds:
+      - |
+        CONFIG=$({{ .KIND_TOOLBOX }} \
+          with-exec --args="kind","get","kubeconfig","--name","{{ .CLUSTER_NAME }}","--internal={{ .INTERNAL }}" stdout)
+        mkdir -p $(dirname {{ .KUBECONFIG_PATH }})
+        echo "${CONFIG}" > {{ .KUBECONFIG_PATH }}
+       
   setup-kind-credentials:
     desc: Set credentials for an external registry on the Kind nodes
     summary: |
