@@ -285,6 +285,58 @@ tasks:
           KUBECONFIG_PATH: '{{ .KUBECONFIG_PATH }}'
           WORKDIR: '{{ .WORKDIR }}'
 
+  bundle:fruit-tests:
+    desc: Run the OperatorHub fruit tests (kiwi, lemon, orange) against an OLM bundle
+    summary: |
+      Downloads the OperatorHub pipeline script (opp.sh), pinned to
+      OPP_SCRIPT_VERSION, and runs the kiwi, lemon and orange tests
+      against a bundle.
+      See https://k8s-operatorhub.github.io/community-operators/operator-test-suite/
+
+      This task only runs inside a GitHub Actions runner:
+      opp.sh changes the machine it runs on, so it should only be executed
+      in ephemeral environments.
+
+      Configurable vars:
+        BUNDLE_PATH          Required. Path to the bundle directory, laid
+                              out as `<dir>/operators/<OPERATOR_NAME>/<VERSION>`,
+                              e.g. in the checkout prepared by `operator-hub:add`.
+        OPP_PRODUCTION_TYPE  Target platform of the tests: "k8s", "ocp"
+                              or "okd". Default: "k8s"
+        WORKDIR              Directory where the task is executed.
+                              Default: {{ .USER_WORKING_DIR }}
+    vars:
+      OPP_PRODUCTION_TYPE: '{{ .OPP_PRODUCTION_TYPE | default "k8s" }}'
+      OPP_SCRIPT:
+        sh: mktemp
+    env:
+      OPP_DEBUG: 1
+      OPP_PRODUCTION_TYPE: '{{ .OPP_PRODUCTION_TYPE }}'
+      OPP_CONTAINER_OPT: -t
+      OPP_AUTO_PACKAGEMANIFEST_CLUSTER_VERSION_LABEL: 1
+      OPP_RELEASE_INDEX_NAME: catalog_tmp
+    requires:
+      vars:
+        - name: BUNDLE_PATH
+        - name: OPP_PRODUCTION_TYPE
+          enum: [ k8s, ocp, okd ]
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    preconditions:
+      - sh: '[ "${GITHUB_ACTIONS:-}" = "true" ]'
+        msg: "bundle:fruit-tests only runs inside a GitHub Actions runner: opp.sh modifies the host it runs on"
+      - sh: 'test -d {{ printf "%s/manifests" .BUNDLE_PATH | shellQuote }} && test -d {{ printf "%s/metadata" .BUNDLE_PATH | shellQuote }}'
+        msg: "BUNDLE_PATH '{{ .BUNDLE_PATH }}' must contain the manifests/ and metadata/ directories"
+      # opp.sh takes the operator name and version from the path
+      - sh: 'test "$(basename "$(dirname "$(dirname "$(readlink -f {{ .BUNDLE_PATH | shellQuote }})")")")" = operators'
+        msg: "BUNDLE_PATH '{{ .BUNDLE_PATH }}' must be laid out as <dir>/operators/<OPERATOR_NAME>/<VERSION>"
+    cmds:
+      - defer: rm -f {{ .OPP_SCRIPT | shellQuote }}
+      - |
+        if [ -n "${GITHUB_TOKEN:-}" ]; then set -- -H "Authorization: Bearer ${GITHUB_TOKEN}"; else set --; fi
+        curl "$@" --retry 5 --retry-delay 2 -fsSL -o {{ .OPP_SCRIPT | shellQuote }} \
+          "https://raw.githubusercontent.com/redhat-openshift-ecosystem/community-operators-pipeline/{{ .OPP_SCRIPT_VERSION }}/ci/scripts/opp.sh"
+      - bash {{ .OPP_SCRIPT | shellQuote }} kiwi,lemon,orange {{ .BUNDLE_PATH | shellQuote }}
+
   catalog:generate:
     desc: Generate an ephemeral OLM catalog containing only the bundle
     internal: true
@@ -599,111 +651,48 @@ tasks:
         with-exec --args=sh --args=/pr/open.sh
         stdout
 
-  olm-tests:
-    desc: Run the community-operators OPP tests (kiwi, lemon, orange) against the OLM bundle
+  operator-hub:fruit-tests:
+    desc: Run the OperatorHub fruit tests against a bundle
     summary: |
-      Clones the community-operators repository, copies the generated
-      bundle into operators/PACKAGE_NAME/VERSION and runs the OPP
-      pipeline script (opp.sh) directly on the host for each test.
-
-      This task only runs inside a GitHub-hosted GitHub Actions runner.
-      opp.sh changes the machine it runs on: it may install packages
-      through ansible-pull, creates a kind cluster, a registry and
-      privileged containers, and writes to ~/.kube and ~/.optest.
-      The runner image already provides what it needs (bash, ansible,
-      curl, openssl, git, docker, kind and kubectl).
-
-      opp.sh starts its own registry (kind-registry) on port 5000, which
-      conflicts with the local registry (REGISTRY_NAME) created by the
-      infra tasks. If the local registry is running, it is stopped before
-      the tests and started again once they end, whether they passed or
-      not, after removing kind-registry to free the port.
+      Runs the OperatorHub fruit tests (kiwi, lemon, orange) against the
+      bundle.
+      See https://k8s-operatorhub.github.io/community-operators/operator-test-suite/
 
       Configurable vars:
-        PACKAGE_NAME  Required. Name of the OLM package, as in the
-                       community-operators operators/ directory.
-        VERSION       Required. Version of the bundle, used as directory
-                       name.
-        BUNDLE_DIR    Directory holding the generated bundle (the
-                       output of bundle:generate).
-                       Default: "olm-bundle"
-        TESTS         Comma-separated list of tests to run, in order.
-                       Default: "kiwi,lemon,orange"
-        COMMUNITY_OPERATORS_REPO  Repository to clone.
-                       Default: "https://github.com/k8s-operatorhub/community-operators.git"
-        COMMUNITY_OPERATORS_REF   Branch or tag to clone.
-                       Default: "main"
-        COMMUNITY_OPERATORS_DIR   Directory the repository is cloned
-                       into, relative to WORKDIR. A previous clone is
-                       removed first. Default: ".community-operators"
-        GITHUB_TOKEN  Authenticates the download of opp.sh from
-                       raw.githubusercontent.com, whose anonymous rate
-                       limit is shared per IP. Default: unset
-        OPP_DEBUG     Verbosity of opp.sh. Default: 1
-        OPP_DRY_RUN   Set to 1 to make opp.sh only print the commands
-                       it would run. Default: 0
-        WORKDIR       Directory where the task is executed.
-                       Default: {{ .USER_WORKING_DIR }}
+        OPERATOR_NAME  Required. Name of the operator.
+        VERSION        Required. Bundle version, in the major.minor.patch
+                        format.
+        BUNDLE_DIR     Directory containing the bundle `manifests/` and
+                        `metadata/` directories.
+                        Default: "olm-bundle/bundle"
+        WORKDIR        Directory where the task is executed.
+                        Default: {{ .USER_WORKING_DIR }}
     vars:
-      BUNDLE_DIR: '{{ .BUNDLE_DIR | default "olm-bundle" }}'
-      TESTS: '{{ .TESTS | default "kiwi,lemon,orange" }}'
-      COMMUNITY_OPERATORS_REPO: '{{ .COMMUNITY_OPERATORS_REPO | default "https://github.com/k8s-operatorhub/community-operators.git" }}'
-      COMMUNITY_OPERATORS_REF: '{{ .COMMUNITY_OPERATORS_REF | default "main" }}'
-      COMMUNITY_OPERATORS_DIR: '{{ .COMMUNITY_OPERATORS_DIR | default ".community-operators" }}'
-      OPP_DEBUG: '{{ .OPP_DEBUG | default "1" }}'
-      OPP_DRY_RUN: '{{ .OPP_DRY_RUN | default "0" }}'
-      WORK_DIR: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
-      COMMUNITY_OPERATORS_ABS_DIR:
-        sh: cd {{ .WORK_DIR | shellQuote }} && realpath -m {{ .COMMUNITY_OPERATORS_DIR | shellQuote }}
-      OPERATOR_DIR: '{{ printf "operators/%s/%s" .PACKAGE_NAME .VERSION }}'
-      REGISTRY_WAS_RUNNING:
-        sh: docker inspect -f {{`'{{.State.Running}}'`}} {{ .REGISTRY_NAME | shellQuote }} 2>/dev/null | grep -qx true && echo true || echo false
-    env:
-      OPP_DEBUG: '{{ .OPP_DEBUG }}'
-      OPP_DRY_RUN: '{{ .OPP_DRY_RUN }}'
-      OPP_PRODUCTION_TYPE: k8s
-      OPP_CONTAINER_OPT: -t
-      OPP_RELEASE_INDEX_NAME: catalog_tmp
+      BUNDLE_DIR: '{{ .BUNDLE_DIR | default "olm-bundle/bundle" }}'
+      TMP_DIR:
+        sh: mktemp -d -u
+      COMMUNITY_OPERATORS_PATH: '{{ .TMP_DIR }}/community-operators'
     requires:
       vars:
-        - name: PACKAGE_NAME
+        - name: OPERATOR_NAME
         - name: VERSION
-    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     preconditions:
-      # Guardrails: opp.sh is meant for disposable CI machines only
       - sh: '[ "${GITHUB_ACTIONS:-}" = "true" ]'
-        msg: "olm-tests only runs inside GitHub Actions (GITHUB_ACTIONS is not 'true'): opp.sh modifies the host it runs on"
-      - sh: '[ "${RUNNER_ENVIRONMENT:-}" = "github-hosted" ]'
-        msg: "olm-tests only runs on GitHub-hosted runners (RUNNER_ENVIRONMENT is '{{ .RUNNER_ENVIRONMENT }}'): opp.sh modifies the host it runs on"
-      - sh: '[ -n "${GITHUB_OUTPUT:-}" ]'
-        msg: "GITHUB_OUTPUT is not set, opp.sh writes its results there"
-      - sh: 'for c in bash ansible ansible-pull curl openssl git docker; do command -v "$c" >/dev/null || { echo "missing: $c" >&2; exit 1; }; done'
-        msg: "opp.sh requires bash, ansible, curl, openssl, git and docker on the runner"
-      - sh: 'test -d "{{ .BUNDLE_DIR }}/bundle"'
-        msg: "BUNDLE_DIR '{{ .BUNDLE_DIR }}' does not contain a 'bundle' directory"
+        msg: "operator-hub:fruit-tests only runs inside a GitHub Actions runner: opp.sh modifies the host it runs on"
     cmds:
-      # Only a previous clone is removed, never an arbitrary directory
-      - |
-        if [ -e {{ .COMMUNITY_OPERATORS_ABS_DIR | shellQuote }} ]; then
-          [ -d {{ .COMMUNITY_OPERATORS_ABS_DIR | shellQuote }}/.git ] || { echo "'{{ .COMMUNITY_OPERATORS_DIR }}' exists and is not a git clone" >&2; exit 1; }
-          rm -rf {{ .COMMUNITY_OPERATORS_ABS_DIR | shellQuote }}
-        fi
-      - git clone -q --depth 1 --branch {{ .COMMUNITY_OPERATORS_REF | shellQuote }} {{ .COMMUNITY_OPERATORS_REPO | shellQuote }} {{ .COMMUNITY_OPERATORS_ABS_DIR | shellQuote }}
-      - mkdir -p {{ printf "%s/%s" .COMMUNITY_OPERATORS_ABS_DIR .OPERATOR_DIR | shellQuote }}
-      - cp -R {{ .BUNDLE_DIR | shellQuote }}/bundle/. {{ printf "%s/%s/" .COMMUNITY_OPERATORS_ABS_DIR .OPERATOR_DIR | shellQuote }}
-      # Downloading to a file first makes a failed fetch abort the task
-      # instead of running an empty script
-      - |
-        if [ -n "${GITHUB_TOKEN:-}" ]; then set -- -H "Authorization: Bearer ${GITHUB_TOKEN}"; else set --; fi
-        curl "$@" --retry 5 --retry-delay 2 -fsSL \
-          -o {{ printf "%s/opp.sh" .COMMUNITY_OPERATORS_ABS_DIR | shellQuote }} \
-          "https://raw.githubusercontent.com/redhat-openshift-ecosystem/community-operators-pipeline/{{ .OPP_SCRIPT_VERSION }}/ci/scripts/opp.sh"
-      # The local registry and opp.sh's kind-registry both bind port 5000
-      - defer: '[ "{{ .REGISTRY_WAS_RUNNING }}" != "true" ] || { docker rm -f kind-registry >/dev/null 2>&1 || true; docker start {{ .REGISTRY_NAME | shellQuote }}; }'
-      - cmd: docker stop {{ .REGISTRY_NAME | shellQuote }}
-        if: '[ "{{ .REGISTRY_WAS_RUNNING }}" = "true" ]'
-      - for: { var: TESTS, split: ',' }
-        cmd: cd {{ .COMMUNITY_OPERATORS_ABS_DIR | shellQuote }} && bash opp.sh {{ .ITEM | shellQuote }} {{ printf "%s/" .OPERATOR_DIR | shellQuote }}
-      # Restart the local registry if it was already running earlier
-      - cmd: docker start {{ .REGISTRY_NAME | shellQuote }}
-        if: '[ "{{ .REGISTRY_WAS_RUNNING }}" = "true" ]'
+      - defer: rm -rf {{ .TMP_DIR | shellQuote }}
+      - task: operator-hub:clone
+        vars:
+          COMMUNITY_OPERATORS_PATH: '{{ .COMMUNITY_OPERATORS_PATH }}'
+          WORKDIR: '{{ .WORKDIR }}'
+      - task: operator-hub:add
+        vars:
+          OPERATOR_NAME: '{{ .OPERATOR_NAME }}'
+          VERSION: '{{ .VERSION }}'
+          BUNDLE_DIR: '{{ .BUNDLE_DIR }}'
+          COMMUNITY_OPERATORS_PATH: '{{ .COMMUNITY_OPERATORS_PATH }}'
+          WORKDIR: '{{ .WORKDIR }}'
+      - task: bundle:fruit-tests
+        vars:
+          BUNDLE_PATH: '{{ .COMMUNITY_OPERATORS_PATH }}/operators/{{ .OPERATOR_NAME }}/{{ .VERSION }}'
+          WORKDIR: '{{ .WORKDIR }}'
