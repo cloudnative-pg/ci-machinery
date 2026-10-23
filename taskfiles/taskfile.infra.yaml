@@ -204,7 +204,8 @@ tasks:
     desc: Export the kubeconfig of the Kind cluster to KUBECONFIG_PATH
     summary: |
       Writes the kubeconfig of the Kind cluster created by setup-kind to
-      KUBECONFIG_PATH, so other tasks can reach the cluster.
+      KUBECONFIG_PATH, so other tasks can reach the cluster. Fails if the
+      cluster does not exist.
 
       Variables:
         CLUSTER_NAME     Name of the cluster (default: cnpg-<k8s_version>).
@@ -213,11 +214,7 @@ tasks:
         INTERNAL         "true" to use the internal address of the API
                          server
     deps:
-      - task: setup-kind
-        vars:
-          CLUSTER_NAME: '{{ .CLUSTER_NAME }}'
-          KIND_NODE_TAG: '{{ .KIND_NODE_TAG }}'
-          NODES: '{{ .NODES }}'
+      - setup-dagger-engine
     vars:
       K8S_VERSION: '{{ regexReplaceAll "^v([0-9.]+).*" .KIND_NODE_TAG "$1" }}'
       CLUSTER_NAME: '{{ .CLUSTER_NAME | default (printf "cnpg-%s" .K8S_VERSION) }}'
@@ -227,6 +224,11 @@ tasks:
     requires:
       vars:
         - name: KUBECONFIG_PATH
+    preconditions:
+      - sh: >
+          test "$( {{ .KIND_TOOLBOX }}
+          with-exec --args="sh","-c","kind get clusters 2>/dev/null | grep -qx {{ .CLUSTER_NAME }} && echo true || echo false" stdout)" = "true"
+        msg: "Kind cluster '{{ .CLUSTER_NAME }}' not found"
     cmds:
       - |
         CONFIG=$({{ .KIND_TOOLBOX }} \
