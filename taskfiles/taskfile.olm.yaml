@@ -391,7 +391,7 @@ tasks:
     desc: Uninstall OLM from a Kubernetes cluster via operator-sdk
     summary: |
       Runs `operator-sdk olm uninstall` against the Kubernetes cluster
-      referenced by KUBECONFIG_PATH.
+      referenced by KUBECONFIG_PATH. Does nothing if OLM is not installed.
 
       Configurable vars:
         KUBECONFIG_PATH  Required. Path of the kubeconfig file of the
@@ -406,6 +406,9 @@ tasks:
       - infra:setup-dagger-engine
     vars:
       EXTRA_ARGS: '{{ .EXTRA_ARGS | default "" }}'
+      SKIP_IF_NOT_INSTALLED: >-
+        operator-sdk olm status >/dev/null 2>&1 ||
+        { echo OLM is not installed, nothing to do; exit 0; };
     env:
       _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
     requires:
@@ -423,7 +426,7 @@ tasks:
         with-env-variable --name=CACHE_BUSTER --value="$(date)"
         with-exec
         --args=sh --args=-c
-        --args={{ printf "operator-sdk olm uninstall %s" .EXTRA_ARGS | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
+        --args={{ printf "%s operator-sdk olm uninstall %s" .SKIP_IF_NOT_INSTALLED .EXTRA_ARGS | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
         stdout
 
   catalog:generate:
