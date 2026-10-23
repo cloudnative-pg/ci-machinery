@@ -151,6 +151,10 @@ tasks:
         NODES         Total number of nodes (default: 1).
         KIND_NODE_TAG kindest/node image tag, optionally with digest
                       (default: DEFAULT_KIND_NODE_TAG).
+        PRIVATE_REGISTRY_HOST, PRIVATE_REGISTRY_USERNAME,
+        PRIVATE_REGISTRY_PASSWORD (env)
+                      Credentials for a private registry, set on the nodes
+                      through setup-kind-credentials.
     deps:
       - setup-dagger-engine
     run: when_changed
@@ -195,10 +199,70 @@ tasks:
         skip_verify = true
         EOF
         done
+      - task: setup-kind-credentials
+        if: '{{ if and .PRIVATE_REGISTRY_HOST .PRIVATE_REGISTRY_USERNAME .PRIVATE_REGISTRY_PASSWORD }}true{{ else }}false{{ end }}'
+        vars:
+          CLUSTER_NAME: '{{ .CLUSTER_NAME }}'
+          PRIVATE_REGISTRY_HOST: '{{ .PRIVATE_REGISTRY_HOST }}'
+          PRIVATE_REGISTRY_USERNAME: '{{ .PRIVATE_REGISTRY_USERNAME }}'
     status:
       - >
         test "$({{ .KIND_TOOLBOX }}
         with-exec --args="sh","-c","kind get clusters 2>/dev/null | grep -qx {{ .CLUSTER_NAME }} && echo true || echo false" stdout)" = "true"
+
+  setup-kind-credentials:
+    desc: Set credentials for an external registry on the Kind nodes
+    summary: |
+      Writes the credentials of a private registry to
+      /var/lib/kubelet/config.json on every node, so pods can pull from it
+      without imagePullSecrets. All three variables are required.
+      Entries are merged: run once per registry, or again to refresh.
+
+      Variables:
+        CLUSTER_NAME               Name of the cluster
+                                   (default: cnpg-<k8s_version>).
+        PRIVATE_REGISTRY_HOST      Registry to authenticate to, e.g. ghcr.io.
+        PRIVATE_REGISTRY_USERNAME  Username for the registry.
+
+      Environment variables:
+        PRIVATE_REGISTRY_PASSWORD  Password or token.
+    vars:
+      K8S_VERSION: '{{ regexReplaceAll "^v([0-9.]+).*" .KIND_NODE_TAG "$1" }}'
+      CLUSTER_NAME: '{{ .CLUSTER_NAME | default (printf "cnpg-%s" .K8S_VERSION) }}'
+    requires:
+      vars:
+        - name: PRIVATE_REGISTRY_HOST
+        - name: PRIVATE_REGISTRY_USERNAME
+    preconditions:
+      - sh: 'test -n "${PRIVATE_REGISTRY_PASSWORD}"'
+        msg: "PRIVATE_REGISTRY_PASSWORD environment variable must be set and non-empty"
+    cmds:
+      - |
+        set -e
+        nodes=$(docker ps -q --filter "label=io.x-k8s.kind.cluster={{ .CLUSTER_NAME }}")
+        if [ -z "${nodes}" ]; then
+          echo "error: no nodes found for cluster {{ .CLUSTER_NAME }}" >&2
+          exit 1
+        fi
+        # The password travels on stdin, so it shows up neither in the logs nor in `ps`.
+        # The script runs inside the node (Debian), where GNU base64 and jq are available.
+        for node in ${nodes}; do
+          printf '%s' "${PRIVATE_REGISTRY_PASSWORD}" | docker exec -i \
+            -e HOST="{{ .PRIVATE_REGISTRY_HOST }}" -e USERNAME="{{ .PRIVATE_REGISTRY_USERNAME }}" \
+            "${node}" sh -c '
+              set -e
+              umask 077
+              file=/var/lib/kubelet/config.json
+              mkdir -p /var/lib/kubelet
+              [ -f "${file}" ] || echo "{}" > "${file}"
+              auth=$(printf "%s:%s" "${USERNAME}" "$(cat)" | base64 -w0)
+              # Add or replace the entry for this host only, then swap the file in
+              # so the kubelet never reads a partial one.
+              jq --arg host "${HOST}" --arg auth "${auth}" ".auths[\$host] = {auth: \$auth}" "${file}" > "${file}.tmp"
+              mv "${file}.tmp" "${file}"
+              echo "set credentials for ${HOST} on $(hostname)"
+            '
+        done
 
   teardown:
     desc: Teardown the resources created by the tasks
