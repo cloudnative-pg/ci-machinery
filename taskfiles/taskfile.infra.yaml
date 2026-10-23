@@ -223,6 +223,8 @@ tasks:
                          Its parent directory is created.
         INTERNAL         "true" to use the internal address of the API
                          server
+        WORKDIR          Directory where the task is executed.
+                         Default: {{ .USER_WORKING_DIR }}
     deps:
       - setup-dagger-engine
     vars:
@@ -234,6 +236,7 @@ tasks:
     requires:
       vars:
         - name: KUBECONFIG_PATH
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     preconditions:
       - sh: >
           test "$( {{ .KIND_TOOLBOX }}
