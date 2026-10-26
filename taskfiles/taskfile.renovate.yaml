@@ -3,7 +3,7 @@ version: 3.54.0
 
 vars:
   # renovate: datasource=docker depName=renovate/renovate versioning=docker
-  RENOVATE_IMAGE_VERSION: 44.179.1@sha256:f30ad41a40ab226734469eb61517d527a198a48b173cf6e0c3ee180927479293
+  RENOVATE_IMAGE_VERSION: 44.184.1@sha256:66a74199aaf3098ab1de4c23087389cfb1a323ed0ea353f4abad085cfbaf173d
 
 tasks:
   validate:
