@@ -190,12 +190,12 @@ tasks:
     desc: Run the Scorecard tests against the OLM bundle image via operator-sdk
     summary: |
       Runs `operator-sdk scorecard` against the bundle image on the
-      Kubernetes cluster referenced by KUBECONFIG_FILE. The bundle must
+      Kubernetes cluster referenced by KUBECONFIG_PATH. The bundle must
       ship a Scorecard configuration (tests/scorecard/config.yaml).
 
       Configurable vars:
         BUNDLE_IMAGE     Required. The bundle image.
-        KUBECONFIG_FILE  Required. Path to the kubeconfig of the target
+        KUBECONFIG_PATH  Required. Path to the kubeconfig of the target
                           cluster, relative to WORKDIR.
         EXTRA_ARGS       Additional raw arguments appended to
                           `operator-sdk scorecard`.
@@ -212,12 +212,12 @@ tasks:
     requires:
       vars:
         - name: BUNDLE_IMAGE
-        - name: KUBECONFIG_FILE
+        - name: KUBECONFIG_PATH
     dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     run: when_changed
     preconditions:
-      - sh: 'test -f "{{ .KUBECONFIG_FILE }}"'
-        msg: "KUBECONFIG_FILE '{{ .KUBECONFIG_FILE }}' does not exist"
+      - sh: 'test -f "{{ .KUBECONFIG_PATH }}"'
+        msg: "KUBECONFIG_PATH '{{ .KUBECONFIG_PATH }}' does not exist"
       - sh: |
           case "{{ .EXTRA_ARGS }}" in
             *--kubeconfig*) exit 1 ;;
@@ -228,7 +228,7 @@ tasks:
         dagger --progress plain core container
         from --address quay.io/operator-framework/operator-sdk:{{ .OPERATOR_SDK_IMAGE_VERSION }}
         {{ .RHEL_CA_TRUST_STEP }}
-        with-mounted-file --path /kubeconfig --source {{ .KUBECONFIG_FILE | shellQuote }}
+        with-mounted-file --path /kubeconfig --source {{ .KUBECONFIG_PATH | shellQuote }}
         with-env-variable --name=CACHE_BUSTER --value="$(date)"
         with-exec
         --args=sh --args=-c
@@ -261,6 +261,8 @@ tasks:
         - name: BUNDLE_IMAGE
         - name: PACKAGE_NAME
         - name: KUBECONFIG_PATH
+        - name: SKIP_DELETE
+          enum: ["true", "false"]
     dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     cmds:
       - defer: rm -rf {{ .CATALOG_DIR | shellQuote }}
@@ -337,6 +339,95 @@ tasks:
         curl "$@" --retry 5 --retry-delay 2 -fsSL -o {{ .OPP_SCRIPT | shellQuote }} \
           "https://raw.githubusercontent.com/redhat-openshift-ecosystem/community-operators-pipeline/{{ .OPP_SCRIPT_SHA }}/ci/scripts/opp.sh"
       - bash {{ .OPP_SCRIPT | shellQuote }} kiwi,lemon,orange {{ .BUNDLE_PATH | shellQuote }}
+
+  olm-operator:setup:
+    desc: Install OLM on a Kubernetes cluster via operator-sdk
+    summary: |
+      Runs `operator-sdk olm install` against the Kubernetes cluster
+      referenced by KUBECONFIG_PATH.
+
+      Configurable vars:
+        KUBECONFIG_PATH  Required. Path of the kubeconfig file of the
+                          cluster to install OLM in.
+        EXTRA_ARGS       Additional raw arguments appended to
+                          `operator-sdk olm install`.
+                          Example: `--version=0.28.0 --timeout=5m`.
+                          Default: ""
+        WORKDIR          Directory where the task is executed.
+                          Default: {{ .USER_WORKING_DIR }}
+    deps:
+      - infra:setup-dagger-engine
+    vars:
+      EXTRA_ARGS: '{{ .EXTRA_ARGS | default "" }}'
+    env:
+      _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
+    requires:
+      vars:
+        - name: KUBECONFIG_PATH
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    preconditions:
+      - sh: 'test -f "{{ .KUBECONFIG_PATH }}"'
+        msg: "KUBECONFIG_PATH '{{ .KUBECONFIG_PATH }}' does not exist"
+    cmds:
+      - >
+        dagger --progress plain core container
+        from --address quay.io/operator-framework/operator-sdk:{{ .OPERATOR_SDK_IMAGE_VERSION }}
+        with-mounted-file --path /root/.kube/config --source {{ .KUBECONFIG_PATH | shellQuote }}
+        with-env-variable --name=CACHE_BUSTER --value="$(date)"
+        with-exec
+        --args=sh --args=-c
+        --args={{ printf "operator-sdk olm install %s" .EXTRA_ARGS | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
+        stdout
+    status:
+      - >
+        dagger --progress plain core container
+        from --address quay.io/operator-framework/operator-sdk:{{ .OPERATOR_SDK_IMAGE_VERSION }}
+        with-mounted-file --path /root/.kube/config --source {{ .KUBECONFIG_PATH | shellQuote }}
+        with-env-variable --name=CACHE_BUSTER --value="$(date)"
+        with-exec --args=olm,status --use-entrypoint
+        sync
+
+  olm-operator:teardown:
+    desc: Uninstall OLM from a Kubernetes cluster via operator-sdk
+    summary: |
+      Runs `operator-sdk olm uninstall` against the Kubernetes cluster
+      referenced by KUBECONFIG_PATH. Does nothing if OLM is not installed.
+
+      Configurable vars:
+        KUBECONFIG_PATH  Required. Path of the kubeconfig file of the
+                          cluster to uninstall OLM from.
+        EXTRA_ARGS       Additional raw arguments appended to
+                          `operator-sdk olm uninstall`.
+                          Example: `--version=0.28.0 --timeout=5m`.
+                          Default: ""
+        WORKDIR          Directory where the task is executed.
+                          Default: {{ .USER_WORKING_DIR }}
+    deps:
+      - infra:setup-dagger-engine
+    vars:
+      EXTRA_ARGS: '{{ .EXTRA_ARGS | default "" }}'
+      SKIP_IF_NOT_INSTALLED: >-
+        operator-sdk olm status >/dev/null 2>&1 ||
+        { echo OLM is not installed, nothing to do; exit 0; };
+    env:
+      _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
+    requires:
+      vars:
+        - name: KUBECONFIG_PATH
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
+    preconditions:
+      - sh: 'test -f "{{ .KUBECONFIG_PATH }}"'
+        msg: "KUBECONFIG_PATH '{{ .KUBECONFIG_PATH }}' does not exist"
+    cmds:
+      - >
+        dagger --progress plain core container
+        from --address quay.io/operator-framework/operator-sdk:{{ .OPERATOR_SDK_IMAGE_VERSION }}
+        with-mounted-file --path /root/.kube/config --source {{ .KUBECONFIG_PATH | shellQuote }}
+        with-env-variable --name=CACHE_BUSTER --value="$(date)"
+        with-exec
+        --args=sh --args=-c
+        --args={{ printf "%s operator-sdk olm uninstall %s" .SKIP_IF_NOT_INSTALLED .EXTRA_ARGS | replace "\"" "\"\"" | printf "\"%s\"" | shellQuote }}
+        stdout
 
   catalog:generate:
     desc: Generate an ephemeral OLM catalog containing only the bundle
