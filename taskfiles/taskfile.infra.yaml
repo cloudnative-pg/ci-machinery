@@ -410,9 +410,9 @@ tasks:
         sync
     status:
       - >
-        ! {{ .KUBECTL_TOOLBOX }}
-        with-exec --args=get,-n,cnpg-system,deployments/cnpg-controller-manager --use-entrypoint
-        sync
+        out=$({{ .KUBECTL_TOOLBOX }}
+        with-exec --args=get,--ignore-not-found,-o,name,-n,cnpg-system,deployments/cnpg-controller-manager --use-entrypoint
+        stdout) && test -z "${out}"
 
   teardown:
     desc: Teardown the resources created by the tasks
