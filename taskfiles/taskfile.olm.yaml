@@ -16,6 +16,14 @@ vars:
   # renovate: datasource=git-refs depName=https://github.com/redhat-openshift-ecosystem/community-operators-pipeline.git versioning=git currentValue=ci/latest
   OPP_SCRIPT_SHA: "06c8c50c3e7f60e155595ccc66764aa526e674fc"
   REGISTRY_CA_VOLUME: '{{ .REGISTRY_CA_VOLUME | default "cnpg-registry-tls" }}'
+  RHEL_CA_TRUST_STEP: >-
+    with-new-file --path /etc/pki/ca-trust/source/anchors/registry-ca.crt
+    --contents="$(
+    docker volume inspect {{ .REGISTRY_CA_VOLUME }} >/dev/null 2>&1 &&
+    docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro busybox:{{ .BUSYBOX_VERSION }}
+    cat /certs/ca.pem 2>/dev/null || true
+    )"
+    with-exec --args update-ca-trust
   VERSION_REGEX: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(rc|dev)[1-9][0-9]*)?$'
 
 tasks:
@@ -60,9 +68,6 @@ tasks:
       OUTPUT_DIR: '{{ .OUTPUT_DIR | default "olm-bundle" }}'
       GIT_TAG_VERSION:
         sh: set -o pipefail && git describe --tags --match 'v*' | sed -e 's/^v//; s/-g[0-9a-f]\+$//; s/-\([0-9]\+\)$/-dev\1/'
-      REGISTRY_CA_PEM:
-        sh: docker volume inspect {{ .REGISTRY_CA_VOLUME }} >/dev/null 2>&1 && docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro busybox:{{ .BUSYBOX_VERSION }} cat /certs/ca.pem 2>/dev/null || true
-      RHEL_CA_TRUST_STEP: '{{ if .REGISTRY_CA_PEM }}with-new-file --path /etc/pki/ca-trust/source/anchors/registry-ca.crt --contents={{ .REGISTRY_CA_PEM | shellQuote }} with-exec --args update-ca-trust{{ end }}'
     env:
       _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
     requires:
@@ -162,9 +167,6 @@ tasks:
       - infra:setup-dagger-engine
     vars:
       EXTRA_ARGS: '{{ .EXTRA_ARGS | default "" }}'
-      REGISTRY_CA_PEM:
-        sh: docker volume inspect {{ .REGISTRY_CA_VOLUME }} >/dev/null 2>&1 && docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro busybox:{{ .BUSYBOX_VERSION }} cat /certs/ca.pem 2>/dev/null || true
-      RHEL_CA_TRUST_STEP: '{{ if .REGISTRY_CA_PEM }}with-new-file --path /etc/pki/ca-trust/source/anchors/registry-ca.crt --contents={{ .REGISTRY_CA_PEM | shellQuote }} with-exec --args update-ca-trust{{ end }}'
     env:
       _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
     requires:
@@ -210,9 +212,6 @@ tasks:
       - infra:setup-dagger-engine
     vars:
       EXTRA_ARGS: '{{ .EXTRA_ARGS | default "" }}'
-      REGISTRY_CA_PEM:
-        sh: docker volume inspect {{ .REGISTRY_CA_VOLUME }} >/dev/null 2>&1 && docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro busybox:{{ .BUSYBOX_VERSION }} cat /certs/ca.pem 2>/dev/null || true
-      RHEL_CA_TRUST_STEP: '{{ if .REGISTRY_CA_PEM }}with-new-file --path /etc/pki/ca-trust/source/anchors/registry-ca.crt --contents={{ .REGISTRY_CA_PEM | shellQuote }} with-exec --args update-ca-trust{{ end }}'
     env:
       _EXPERIMENTAL_DAGGER_RUNNER_HOST: docker-container://{{ .DAGGER_ENGINE }}
     requires:
