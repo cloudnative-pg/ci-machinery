@@ -6,7 +6,7 @@ includes:
 
 vars:
   # renovate: datasource=docker depName=busybox versioning=docker
-  BUSYBOX_VERSION: 1.38.0@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
+  BUSYBOX_VERSION: 1.38.0@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4
   # renovate: datasource=docker depName=quay.io/operator-framework/operator-sdk versioning=docker
   OPERATOR_SDK_IMAGE_VERSION: v1.42.3@sha256:b7378eb179b97fbdf1ff1304e86f62e9ff9f9c2d0089464111ce8eddd39e2013
   # renovate: datasource=docker depName=quay.io/operator-framework/opm versioning=docker
