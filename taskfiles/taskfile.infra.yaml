@@ -205,7 +205,7 @@ tasks:
         done
         {{ .KIND_TOOLBOX }} \
         with-new-file --contents="${KIND_CONFIG}" --path=/root/kind-config.yaml \
-        with-exec --args="kind","create","cluster","--name","{{ .CLUSTER_NAME }}","--image","kindest/node:{{ .KIND_NODE_TAG }}","--config","/root/kind-config.yaml" sync
+        with-exec --args="kind","create","cluster","--name","{{ .CLUSTER_NAME }}","--image","kindest/node:{{ .KIND_NODE_TAG }}","--config","/root/kind-config.yaml","--wait","10m" sync
       # Skip TLS verification for the local registry
       - |
         for node in $(docker ps -q --filter "label=io.x-k8s.kind.cluster={{ .CLUSTER_NAME }}"); do
