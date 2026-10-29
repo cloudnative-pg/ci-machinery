@@ -317,12 +317,23 @@ tasks:
       OPP_PRODUCTION_TYPE: '{{ .OPP_PRODUCTION_TYPE | default "k8s" }}'
       OPP_SCRIPT:
         sh: mktemp -u
+      REGISTRY_CA_FILE:
+        sh: mktemp -u "${TMPDIR:-/tmp}/fruit-tests-registry-ca.XXX"
+      PRETEST_SCRIPT:
+        sh: mktemp -u "${TMPDIR:-/tmp}/fruit-tests-pretest.XXX"
+      LOCAL_REGISTRY:
+        sh: docker inspect -f {{`'{{.State.Running}}'`}} {{ .REGISTRY_NAME }} 2>/dev/null | grep -qx true && echo true || echo false
     env:
       OPP_DEBUG: 1
       OPP_PRODUCTION_TYPE: '{{ .OPP_PRODUCTION_TYPE }}'
       OPP_CONTAINER_OPT: -t
       OPP_AUTO_PACKAGEMANIFEST_CLUSTER_VERSION_LABEL: 1
       OPP_RELEASE_INDEX_NAME: catalog_tmp
+      OPP_CONTAINER_RUN_EXTRA_ARGS: >-
+        {{ if eq .LOCAL_REGISTRY "true" -}}
+        --mount type=bind,source={{ .REGISTRY_CA_FILE }},target=/etc/containers/certs.d/{{ .REGISTRY_NAME }}:{{ .REGISTRY_INTERNAL_PORT }}/ca.crt,readonly
+        {{- end }}
+      OPP_PRETEST_CUSTOM_SCRIPT: '{{ if eq .LOCAL_REGISTRY "true" }}{{ .PRETEST_SCRIPT }}{{ end }}'
     requires:
       vars:
         - name: BUNDLE_PATH
@@ -338,12 +349,76 @@ tasks:
       - sh: 'test "$(basename "$(dirname "$(dirname "$(readlink -f {{ .BUNDLE_PATH | shellQuote }})")")")" = operators'
         msg: "BUNDLE_PATH '{{ .BUNDLE_PATH }}' must be laid out as <dir>/operators/<OPERATOR_NAME>/<VERSION>"
     cmds:
+      - task: bundle:fruit-tests:setup-local-registry-access
+        if: '[ "{{ .LOCAL_REGISTRY }}" = "true" ]'
+        vars:
+          REGISTRY_CA_FILE: '{{ .REGISTRY_CA_FILE }}'
+          PRETEST_SCRIPT: '{{ .PRETEST_SCRIPT }}'
       - defer: rm -f {{ .OPP_SCRIPT | shellQuote }}
       - |
         if [ -n "${GITHUB_TOKEN:-}" ]; then set -- -H "Authorization: Bearer ${GITHUB_TOKEN}"; else set --; fi
         curl "$@" --retry 5 --retry-delay 2 -fsSL -o {{ .OPP_SCRIPT | shellQuote }} \
           "https://raw.githubusercontent.com/redhat-openshift-ecosystem/community-operators-pipeline/{{ .OPP_SCRIPT_SHA }}/ci/scripts/opp.sh"
       - bash {{ .OPP_SCRIPT | shellQuote }} kiwi,lemon,orange {{ .BUNDLE_PATH | shellQuote }}
+
+  bundle:fruit-tests:setup-local-registry-access:
+    desc: Make the local registry reachable from the opp.sh test environment
+    summary: |
+      Changes the host so the opp.sh test environment can pull the
+      images of the local registry, with the same name as the image
+      references:
+        - adds the registry to /etc/hosts, for the test container, which
+          uses the host network and can't use the Docker network DNS;
+        - writes the registry CA to REGISTRY_CA_FILE, to be mounted in
+          the test container;
+        - writes PRETEST_SCRIPT, to be run by opp.sh after each reset of
+          its Kind cluster: it connects the registry to the cluster
+          network and trusts its CA on the nodes.
+
+      Configurable vars:
+        REGISTRY_CA_FILE  Required. Path the registry CA is written to.
+        PRETEST_SCRIPT    Required. Path the pretest script is written to.
+    internal: true
+    vars:
+      REGISTRY_IP:
+        sh: docker inspect -f '{{`{{`}}(index .NetworkSettings.Networks "{{ .REGISTRY_NETWORK }}").IPAddress{{`}}`}}' {{ .REGISTRY_NAME }}
+      # Name of the Kind cluster created by the opp.sh playbooks
+      OPP_KIND_CLUSTER: operator-test
+    requires:
+      vars:
+        - name: REGISTRY_CA_FILE
+        - name: PRETEST_SCRIPT
+    preconditions:
+      - sh: test -n "{{ .REGISTRY_IP }}"
+        msg: "Registry '{{ .REGISTRY_NAME }}' has no IP on the '{{ .REGISTRY_NETWORK }}' network"
+    cmds:
+      - >
+        docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro busybox:{{ .BUSYBOX_VERSION }}
+        cat /certs/ca.pem > {{ .REGISTRY_CA_FILE | shellQuote }}
+      # The opp.sh test container uses the host network, so it can't resolve
+      # the registry name through the Docker network DNS. Docker gives such
+      # containers a copy of the host's /etc/hosts when it creates them, so
+      # this entry must exist before opp.sh starts the test container.
+      # The registry IP on its Docker network, routed by the host, is used
+      # rather than 127.0.0.1, where the opp.sh registry takes port 5000.
+      - echo "{{ .REGISTRY_IP }} {{ .REGISTRY_NAME }}" | sudo tee -a /etc/hosts > /dev/null
+      # Passed to opp.sh as OPP_PRETEST_CUSTOM_SCRIPT, which runs it on the
+      # host before each test, after recreating its Kind cluster: the new
+      # nodes need the registry on their network and its CA in their trust store.
+      - |
+        cat > {{ .PRETEST_SCRIPT | shellQuote }} <<'EOF'
+        #!/bin/sh
+        set -e
+        docker network connect kind {{ .REGISTRY_NAME }} 2>/dev/null || true
+        for node in $(docker ps -q --filter label=io.x-k8s.kind.cluster={{ .OPP_KIND_CLUSTER }}); do
+          docker cp {{ .REGISTRY_CA_FILE }} "${node}:/usr/local/share/ca-certificates/{{ .REGISTRY_NAME }}.crt"
+          docker exec "${node}" update-ca-certificates
+          # containerd reads the system CAs at startup
+          docker exec "${node}" systemctl restart containerd
+          timeout 60 sh -c "until docker exec ${node} crictl info >/dev/null 2>&1; do sleep 1; done"
+        done
+        EOF
+        chmod +x {{ .PRETEST_SCRIPT | shellQuote }}
 
   olm-operator:setup:
     desc: Install OLM on a Kubernetes cluster via operator-sdk
