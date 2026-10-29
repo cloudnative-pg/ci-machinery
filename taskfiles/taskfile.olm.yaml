@@ -305,6 +305,13 @@ tasks:
       opp.sh changes the machine it runs on, so it should only be executed
       in ephemeral environments.
 
+      When the local registry is running, its images are made reachable
+      from the opp.sh test environment, so bundles can reference them:
+      the registry name is added to the runner's /etc/hosts and its CA is
+      mounted in the test container (OPP_CONTAINER_RUN_EXTRA_ARGS), while a
+      pretest script (OPP_PRETEST_CUSTOM_SCRIPT) connects the registry to
+      the opp.sh Kind cluster and trusts its CA on the nodes.
+
       Configurable vars:
         BUNDLE_PATH          Required. Path to the bundle directory, laid
                               out as `<dir>/operators/<OPERATOR_NAME>/<VERSION>`,
@@ -317,12 +324,26 @@ tasks:
       OPP_PRODUCTION_TYPE: '{{ .OPP_PRODUCTION_TYPE | default "k8s" }}'
       OPP_SCRIPT:
         sh: mktemp -u
+      # Task caches the output of identical commands, hence the distinct templates
+      REGISTRY_CA_FILE:
+        sh: mktemp -u "${TMPDIR:-/tmp}/fruit-tests-registry-ca.XXXXXX"
+      PRETEST_SCRIPT:
+        sh: mktemp -u "${TMPDIR:-/tmp}/fruit-tests-pretest.XXXXXX"
+      LOCAL_REGISTRY:
+        sh: docker inspect -f {{`'{{.State.Running}}'`}} {{ .REGISTRY_NAME }} 2>/dev/null | grep -qx true && echo true || echo false
     env:
       OPP_DEBUG: 1
       OPP_PRODUCTION_TYPE: '{{ .OPP_PRODUCTION_TYPE }}'
       OPP_CONTAINER_OPT: -t
       OPP_AUTO_PACKAGEMANIFEST_CLUSTER_VERSION_LABEL: 1
       OPP_RELEASE_INDEX_NAME: catalog_tmp
+      # podman, used by the test container to pull images, reads per-registry CAs from certs.d.
+      # --mount rather than -v, which can't handle the colon in the target path.
+      OPP_CONTAINER_RUN_EXTRA_ARGS: >-
+        {{ if eq .LOCAL_REGISTRY "true" -}}
+        --mount type=bind,source={{ .REGISTRY_CA_FILE }},target=/etc/containers/certs.d/{{ .REGISTRY_NAME }}:{{ .REGISTRY_INTERNAL_PORT }}/ca.crt,readonly
+        {{- end }}
+      OPP_PRETEST_CUSTOM_SCRIPT: '{{ if eq .LOCAL_REGISTRY "true" }}{{ .PRETEST_SCRIPT }}{{ end }}'
     requires:
       vars:
         - name: BUNDLE_PATH
@@ -339,11 +360,97 @@ tasks:
         msg: "BUNDLE_PATH '{{ .BUNDLE_PATH }}' must be laid out as <dir>/operators/<OPERATOR_NAME>/<VERSION>"
     cmds:
       - defer: rm -f {{ .OPP_SCRIPT | shellQuote }}
+      - defer:
+          task: bundle:fruit-tests:teardown-registry-access
+          vars:
+            REGISTRY_CA_FILE: '{{ .REGISTRY_CA_FILE }}'
+            PRETEST_SCRIPT: '{{ .PRETEST_SCRIPT }}'
+      - task: bundle:fruit-tests:setup-registry-access
+        if: '[ "{{ .LOCAL_REGISTRY }}" = "true" ]'
+        vars:
+          REGISTRY_CA_FILE: '{{ .REGISTRY_CA_FILE }}'
+          PRETEST_SCRIPT: '{{ .PRETEST_SCRIPT }}'
       - |
         if [ -n "${GITHUB_TOKEN:-}" ]; then set -- -H "Authorization: Bearer ${GITHUB_TOKEN}"; else set --; fi
         curl "$@" --retry 5 --retry-delay 2 -fsSL -o {{ .OPP_SCRIPT | shellQuote }} \
           "https://raw.githubusercontent.com/redhat-openshift-ecosystem/community-operators-pipeline/{{ .OPP_SCRIPT_SHA }}/ci/scripts/opp.sh"
       - bash {{ .OPP_SCRIPT | shellQuote }} kiwi,lemon,orange {{ .BUNDLE_PATH | shellQuote }}
+
+  bundle:fruit-tests:setup-registry-access:
+    desc: Make the local registry reachable from the opp.sh test environment
+    summary: |
+      Changes the host so the opp.sh test environment can pull the
+      images of the local registry, with the same name as the image
+      references:
+        - adds the registry to /etc/hosts, for the test container, which
+          uses the host network and can't use the Docker network DNS.
+          The registry IP on its Docker network is used rather than
+          127.0.0.1, as the opp.sh registry takes host port 5000;
+        - writes the registry CA to REGISTRY_CA_FILE, to be mounted in
+          the test container;
+        - writes PRETEST_SCRIPT, to be run by opp.sh after each reset of
+          its Kind cluster: it connects the registry to the cluster
+          network and trusts its CA on the nodes.
+
+      Configurable vars:
+        REGISTRY_CA_FILE  Required. Path the registry CA is written to.
+        PRETEST_SCRIPT    Required. Path the pretest script is written to.
+    internal: true
+    vars:
+      REGISTRY_IP:
+        sh: docker inspect -f '{{`{{`}}(index .NetworkSettings.Networks "{{ .REGISTRY_NETWORK }}").IPAddress{{`}}`}}' {{ .REGISTRY_NAME }}
+      # Name of the Kind cluster created by the opp.sh playbooks (reset_kind role)
+      OPP_KIND_CLUSTER: operator-test
+    requires:
+      vars:
+        - name: REGISTRY_CA_FILE
+        - name: PRETEST_SCRIPT
+    preconditions:
+      - sh: test -n "{{ .REGISTRY_IP }}"
+        msg: "Registry '{{ .REGISTRY_NAME }}' has no IP on the '{{ .REGISTRY_NETWORK }}' network"
+    cmds:
+      - >
+        docker run --rm -v {{ .REGISTRY_CA_VOLUME }}:/certs:ro busybox:{{ .BUSYBOX_VERSION }}
+        cat /certs/ca.pem > {{ .REGISTRY_CA_FILE | shellQuote }}
+      - sudo sed -i '/ {{ .REGISTRY_NAME }}$/d' /etc/hosts
+      - echo "{{ .REGISTRY_IP }} {{ .REGISTRY_NAME }}" | sudo tee -a /etc/hosts > /dev/null
+      - |
+        cat > {{ .PRETEST_SCRIPT | shellQuote }} <<'EOF'
+        #!/bin/sh
+        set -e
+        docker network connect kind {{ .REGISTRY_NAME }} 2>/dev/null || true
+        for node in $(docker ps -q --filter label=io.x-k8s.kind.cluster={{ .OPP_KIND_CLUSTER }}); do
+          docker cp {{ .REGISTRY_CA_FILE }} "${node}:/usr/local/share/ca-certificates/{{ .REGISTRY_NAME }}.crt"
+          docker exec "${node}" update-ca-certificates
+          # containerd reads the system CAs at startup
+          docker exec "${node}" systemctl restart containerd
+          timeout 60 sh -c "until docker exec ${node} crictl info >/dev/null 2>&1; do sleep 1; done"
+        done
+        EOF
+        chmod +x {{ .PRETEST_SCRIPT | shellQuote }}
+
+  bundle:fruit-tests:teardown-registry-access:
+    desc: Revert the host changes of bundle:fruit-tests:setup-registry-access
+    summary: |
+      Removes the registry from /etc/hosts, and the files written by
+      bundle:fruit-tests:setup-registry-access. Does nothing for what is
+      already gone.
+
+      Configurable vars:
+        REGISTRY_CA_FILE  Required. Path of the registry CA file.
+        PRETEST_SCRIPT    Required. Path of the pretest script.
+    internal: true
+    requires:
+      vars:
+        - name: REGISTRY_CA_FILE
+        - name: PRETEST_SCRIPT
+    cmds:
+      - rm -f {{ .REGISTRY_CA_FILE | shellQuote }} {{ .PRETEST_SCRIPT | shellQuote }}
+      # Only touch /etc/hosts when there's an entry to remove
+      - |
+        if grep -q ' {{ .REGISTRY_NAME }}$' /etc/hosts; then
+          sudo sed -i '/ {{ .REGISTRY_NAME }}$/d' /etc/hosts
+        fi
 
   olm-operator:setup:
     desc: Install OLM on a Kubernetes cluster via operator-sdk
