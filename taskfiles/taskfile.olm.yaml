@@ -509,7 +509,7 @@ tasks:
         apiVersion: operators.coreos.com/v1alpha1
         kind: CatalogSource
         metadata:
-          name: operators
+          name: {{ .PACKAGE_NAME }}
           namespace: {{ .NAMESPACE }}
         spec:
           sourceType: grpc
@@ -520,11 +520,11 @@ tasks:
         apiVersion: operators.coreos.com/v1alpha1
         kind: Subscription
         metadata:
-          name: operator
+          name: {{ .PACKAGE_NAME }}
           namespace: {{ .NAMESPACE }}
         spec:
           name: {{ .PACKAGE_NAME }}
-          source: operators
+          source: {{ .PACKAGE_NAME }}
           sourceNamespace: {{ .NAMESPACE }}
           installPlanApproval: Automatic
     env:
@@ -554,11 +554,11 @@ tasks:
         from --address alpine/kubectl:{{ .KUBECTL_VERSION }}
         with-new-file --path /root/.kube/config --contents="$(cat {{ .KUBECONFIG_PATH | shellQuote }})"
         with-env-variable --name=CACHEBUSTER --value="$(date)"
-        with-exec --args=wait,-n,{{ .NAMESPACE }},--timeout={{ .TIMEOUT }},subscription/operator,--for=jsonpath={.status.installedCSV}
+        with-exec --args=wait,-n,{{ .NAMESPACE }},--timeout={{ .TIMEOUT }},subscription/{{ .PACKAGE_NAME }},--for=jsonpath={.status.installedCSV}
         --use-entrypoint
         with-exec --args=sh --args=-c
         --args='kubectl wait -n {{ .NAMESPACE }} --timeout={{ .TIMEOUT }}
-        csv/$(kubectl get -n {{ .NAMESPACE }} subscription/operator -o jsonpath={.status.installedCSV})
+        csv/$(kubectl get -n {{ .NAMESPACE }} subscription/{{ .PACKAGE_NAME }} -o jsonpath={.status.installedCSV})
         --for=jsonpath={.status.phase}=Succeeded'
         sync
 
@@ -587,11 +587,11 @@ tasks:
         from --address alpine/kubectl:{{ .KUBECTL_VERSION }}
         with-new-file --path /root/.kube/config --contents="$(cat {{ .KUBECONFIG_PATH | shellQuote }})"
         with-env-variable --name=CACHEBUSTER --value="$(date)"
-        with-exec --args=delete,-n,{{ .NAMESPACE }},subscription/operator,--ignore-not-found,--timeout={{ .TIMEOUT }}
+        with-exec --args=delete,-n,{{ .NAMESPACE }},subscription/{{ .PACKAGE_NAME }},--ignore-not-found,--timeout={{ .TIMEOUT }}
         --use-entrypoint
         with-exec --args=delete,-n,{{ .NAMESPACE }},csv,-l,{{ .OPERATOR_LABEL }},--ignore-not-found,--timeout={{ .TIMEOUT }}
         --use-entrypoint
-        with-exec --args=delete,-n,{{ .NAMESPACE }},catalogsource/operators,--ignore-not-found,--timeout={{ .TIMEOUT }}
+        with-exec --args=delete,-n,{{ .NAMESPACE }},catalogsource/{{ .PACKAGE_NAME }},--ignore-not-found,--timeout={{ .TIMEOUT }}
         --use-entrypoint
         sync
 
