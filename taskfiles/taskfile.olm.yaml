@@ -258,8 +258,7 @@ tasks:
     vars:
       CATALOG_DIR:
         sh: mktemp -d
-      # Replace the bundle image's tag, and digest if any, with the "catalog" tag
-      CATALOG_IMAGE: '{{ regexReplaceAll ":[^/]*$" .BUNDLE_IMAGE "" }}:catalog'
+      CATALOG_IMAGE: '{{ .BUNDLE_IMAGE }}-catalog'
       SKIP_DELETE: '{{ .SKIP_DELETE | default "false" }}'
     requires:
       vars:
