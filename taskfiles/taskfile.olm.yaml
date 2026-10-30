@@ -409,6 +409,7 @@ tasks:
         cat > {{ .PRETEST_SCRIPT | shellQuote }} <<'EOF'
         #!/bin/sh
         set -e
+        # "kind" is the default Docker network of the Kind clusters created by opp.sh
         docker network connect kind {{ .REGISTRY_NAME }} 2>/dev/null || true
         for node in $(docker ps -q --filter label=io.x-k8s.kind.cluster={{ .OPP_KIND_CLUSTER }}); do
           docker cp {{ .REGISTRY_CA_FILE }} "${node}:/usr/local/share/ca-certificates/{{ .REGISTRY_NAME }}.crt"
