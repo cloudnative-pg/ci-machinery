@@ -264,6 +264,16 @@ tasks:
       - |
         CONFIG=$({{ .KIND_TOOLBOX }} \
           with-exec --args="kind","get","kubeconfig","--name","{{ .CLUSTER_NAME }}","--internal={{ .INTERNAL }}" stdout)
+        {{- if eq .INTERNAL "true" }}
+        # Dagger's DNS (dnsmasq with domain-needed) never forwards single-label
+        # names, so the bare node name can't be resolved from Dagger containers.
+        # Use the <container>.<network> name Docker also serves, and keep TLS
+        # checking against the node name the API server certificate carries.
+        # The escaped newline, unlike \n, also works with BSD sed on macOS.
+        CONFIG=$(echo "${CONFIG}" | sed -E \
+          's#^( *)server: https://({{ .CLUSTER_NAME }}-control-plane):#\1tls-server-name: \2\
+        \1server: https://\2.{{ .REGISTRY_NETWORK }}:#')
+        {{- end }}
         mkdir -p $(dirname {{ .KUBECONFIG_PATH }})
         echo "${CONFIG}" > {{ .KUBECONFIG_PATH }}
 
