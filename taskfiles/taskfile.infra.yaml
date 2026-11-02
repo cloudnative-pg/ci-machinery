@@ -61,6 +61,9 @@ tasks:
     desc: Generate certificates for the local registry
     run: once
     internal: true
+    preconditions:
+      - sh: '[[ "{{ .REGISTRY_NAME }}" == *.* ]]'
+        msg: "REGISTRY_NAME must contain a '.', got '{{ .REGISTRY_NAME }}'. Dagger's DNS does not resolve single-label names."
     cmds:
       - docker volume create {{ .REGISTRY_CA_VOLUME }}
       - >
@@ -184,6 +187,8 @@ tasks:
     preconditions:
       - sh: test "{{ .NODES }}" -ge 1 2>/dev/null
         msg: "NODES must be an integer >= 1, got '{{ .NODES }}'"
+      - sh: '[[ "{{ .CLUSTER_NAME }}" == *.* ]]'
+        msg: "CLUSTER_NAME must contain a '.', got '{{ .CLUSTER_NAME }}'. Dagger's DNS does not resolve single-label names."
     cmds:
       - |
         KIND_CONFIG=$(cat <<'EOF'
@@ -260,20 +265,12 @@ tasks:
           test "$( {{ .KIND_TOOLBOX }}
           with-exec --args="sh","-c","kind get clusters 2>/dev/null | grep -qx {{ .CLUSTER_NAME }} && echo true || echo false" stdout)" = "true"
         msg: "Kind cluster '{{ .CLUSTER_NAME }}' not found"
+      - sh: '[[ "{{ .INTERNAL }}" != "true" || "{{ .CLUSTER_NAME }}" == *.* ]]'
+        msg: "CLUSTER_NAME must contain a '.' when INTERNAL=true, got '{{ .CLUSTER_NAME }}'. Dagger's DNS does not resolve single-label names."
     cmds:
       - |
         CONFIG=$({{ .KIND_TOOLBOX }} \
           with-exec --args="kind","get","kubeconfig","--name","{{ .CLUSTER_NAME }}","--internal={{ .INTERNAL }}" stdout)
-        {{- if eq .INTERNAL "true" }}
-        # Dagger's DNS (dnsmasq with domain-needed) never forwards single-label
-        # names, so the bare node name can't be resolved from Dagger containers.
-        # Use the <container>.<network> name Docker also serves, and keep TLS
-        # checking against the node name the API server certificate carries.
-        # The escaped newline, unlike \n, also works with BSD sed on macOS.
-        CONFIG=$(echo "${CONFIG}" | sed -E \
-          's#^( *)server: https://({{ .CLUSTER_NAME }}-control-plane):#\1tls-server-name: \2\
-        \1server: https://\2.{{ .REGISTRY_NETWORK }}:#')
-        {{- end }}
         mkdir -p $(dirname {{ .KUBECONFIG_PATH }})
         echo "${CONFIG}" > {{ .KUBECONFIG_PATH }}
 
