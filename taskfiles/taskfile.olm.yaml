@@ -265,6 +265,9 @@ tasks:
         KUBECONFIG_PATH     Required. Path of the kubeconfig file of the
                              cluster to install the operator in.
         PACKAGE_NAME        Required. Name of the operator's OLM package.
+        PLATFORMS           Comma-separated buildx target platforms of the
+                             catalog image.
+                             Default: "linux/amd64,linux/arm64"
         SKIP_DELETE         When "true", the operator is left installed.
                              Default: "false"
         WORKDIR             Directory where the task is executed.
@@ -293,6 +296,7 @@ tasks:
         vars:
           CATALOG_IMAGE: '{{ .CATALOG_IMAGE }}'
           CATALOG_DIR: '{{ .CATALOG_DIR }}'
+          PLATFORMS: '{{ .PLATFORMS }}'
       - task: catalog:install
         vars:
           CATALOG_IMAGE: '{{ .CATALOG_IMAGE }}'
