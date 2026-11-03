@@ -61,6 +61,9 @@ tasks:
     desc: Generate certificates for the local registry
     run: once
     internal: true
+    preconditions:
+      - sh: '[[ "{{ .REGISTRY_NAME }}" == *.* ]]'
+        msg: "REGISTRY_NAME must contain a '.', got '{{ .REGISTRY_NAME }}'. Dagger's DNS does not resolve single-label names."
     cmds:
       - docker volume create {{ .REGISTRY_CA_VOLUME }}
       - >
@@ -184,6 +187,8 @@ tasks:
     preconditions:
       - sh: test "{{ .NODES }}" -ge 1 2>/dev/null
         msg: "NODES must be an integer >= 1, got '{{ .NODES }}'"
+      - sh: '[[ "{{ .CLUSTER_NAME }}" == *.* ]]'
+        msg: "CLUSTER_NAME must contain a '.', got '{{ .CLUSTER_NAME }}'. Dagger's DNS does not resolve single-label names."
     cmds:
       - |
         KIND_CONFIG=$(cat <<'EOF'
@@ -260,6 +265,8 @@ tasks:
           test "$( {{ .KIND_TOOLBOX }}
           with-exec --args="sh","-c","kind get clusters 2>/dev/null | grep -qx {{ .CLUSTER_NAME }} && echo true || echo false" stdout)" = "true"
         msg: "Kind cluster '{{ .CLUSTER_NAME }}' not found"
+      - sh: '[[ "{{ .INTERNAL }}" != "true" || "{{ .CLUSTER_NAME }}" == *.* ]]'
+        msg: "CLUSTER_NAME must contain a '.' when INTERNAL=true, got '{{ .CLUSTER_NAME }}'. Dagger's DNS does not resolve single-label names."
     cmds:
       - |
         CONFIG=$({{ .KIND_TOOLBOX }} \
