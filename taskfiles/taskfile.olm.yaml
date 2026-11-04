@@ -25,6 +25,7 @@ vars:
     )"
     with-exec --args update-ca-trust
   VERSION_REGEX: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(rc|dev)[1-9][0-9]*)?$'
+  RELEASE_VERSION_REGEX: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc[1-9][0-9]*)?$'
 
 tasks:
   bundle:generate:
@@ -807,8 +808,8 @@ tasks:
         msg: "FORK_REPO_URL '{{ .FORK_REPO_URL }}' is not a GitHub repository URL"
       - sh: 'test -f {{ .PR_TEMPLATE | shellQuote }}'
         msg: "Pull request template '{{ .PR_TEMPLATE }}' does not exist"
-      - sh: 'echo {{ .VERSION | shellQuote }} | grep -Eq "^[0-9]+\.[0-9]+\.[0-9]+$"'
-        msg: "VERSION '{{ .VERSION }}' is not in the major.minor.patch format"
+      - sh: 'echo {{ .VERSION | shellQuote }} | grep -Eq {{ .RELEASE_VERSION_REGEX | shellQuote }}'
+        msg: "VERSION '{{ .VERSION }}' must be a release (major.minor.patch) or a release candidate (major.minor.patch-rcN)"
       - sh: 'git -C {{ .COMMUNITY_OPERATOR_PATH | shellQuote }} rev-parse --git-dir >/dev/null 2>&1'
         msg: "COMMUNITY_OPERATOR_PATH '{{ .COMMUNITY_OPERATOR_PATH }}' is not a git repository"
       - sh: 'test -d {{ printf "%s/%s/%s" .COMMUNITY_OPERATOR_PATH .OPERATOR_SUBDIR .VERSION | shellQuote }}'
