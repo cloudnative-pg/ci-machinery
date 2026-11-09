@@ -266,6 +266,9 @@ tasks:
         KUBECONFIG_PATH     Required. Path of the kubeconfig file of the
                              cluster to install the operator in.
         PACKAGE_NAME        Required. Name of the operator's OLM package.
+        CATALOG_IMAGE       The catalog image to build and push.
+                             Default: the BUNDLE_IMAGE without its tag or
+                             digest, with the "catalog" tag
         PLATFORMS           Comma-separated buildx target platforms of the
                              catalog image.
                              Default: "linux/amd64,linux/arm64"
@@ -276,8 +279,9 @@ tasks:
     vars:
       CATALOG_DIR:
         sh: mktemp -d
-      # Replace the bundle image's tag, and digest if any, with the "catalog" tag
-      CATALOG_IMAGE: '{{ regexReplaceAll ":[^/]*$" .BUNDLE_IMAGE "" }}:catalog'
+      # Unless given, replace the bundle image's tag, and digest if any, with
+      # the "catalog" tag
+      CATALOG_IMAGE: '{{ .CATALOG_IMAGE | default (printf "%s:catalog" (regexReplaceAll "(@.*|:[^/]*)$" .BUNDLE_IMAGE "")) }}'
       SKIP_DELETE: '{{ .SKIP_DELETE | default "false" }}'
     requires:
       vars:
@@ -293,11 +297,13 @@ tasks:
         vars:
           BUNDLE_IMAGE: '{{ .BUNDLE_IMAGE }}'
           OUTPUT_DIR: '{{ .CATALOG_DIR }}'
+          WORKDIR: '{{ .WORKDIR }}'
       - task: catalog:image
         vars:
           CATALOG_IMAGE: '{{ .CATALOG_IMAGE }}'
           CATALOG_DIR: '{{ .CATALOG_DIR }}'
           PLATFORMS: '{{ .PLATFORMS }}'
+          WORKDIR: '{{ .WORKDIR }}'
       - task: catalog:install
         vars:
           CATALOG_IMAGE: '{{ .CATALOG_IMAGE }}'
@@ -531,7 +537,18 @@ tasks:
 
   catalog:generate:
     desc: Generate an ephemeral OLM catalog containing only the bundle
-    internal: true
+    summary: |
+      Renders a file-based catalog containing only the given bundle,
+      in the major-version channel of the Stable channel archetype
+      (e.g. "stable-v1").
+      The catalog is validated and then exported together with its
+      configs.Dockerfile as a single directory.
+
+      Configurable vars:
+        BUNDLE_IMAGE     Required. The bundle image to add to the catalog.
+        OUTPUT_DIR       Required. Directory the catalog is exported to.
+        WORKDIR          Directory where the task is executed.
+                          Default: {{ .USER_WORKING_DIR }}
     deps:
       - infra:setup-dagger-engine
     vars:
@@ -549,6 +566,7 @@ tasks:
       vars:
         - name: BUNDLE_IMAGE
         - name: OUTPUT_DIR
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     run: when_changed
     cmds:
       - >
@@ -569,28 +587,40 @@ tasks:
 
   catalog:image:
     desc: Build the OLM catalog image
+    summary: |
+      Builds the OLM catalog image starting from a catalog directory and pushes it.
+
+      Configurable vars:
+        CATALOG_IMAGE        Required. Full reference (registry, repository
+                              and tag) of the catalog image.
+        CATALOG_DIR          Required. Directory holding the generated
+                              catalog and configs.Dockerfile.
+        PLATFORMS            Comma-separated buildx target platforms.
+                              Default: "linux/amd64,linux/arm64".
+        WORKDIR              Directory where the task is executed.
+                              Default: {{ .USER_WORKING_DIR }}
     deps:
       - infra:setup-docker-builder
-    internal: true
     vars:
       PLATFORMS: '{{ .PLATFORMS | default "linux/amd64,linux/arm64" }}'
     requires:
       vars:
         - name: CATALOG_IMAGE
         - name: CATALOG_DIR
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     run: when_changed
     preconditions:
-      - sh: 'test -f "{{ .CATALOG_DIR }}/configs.Dockerfile"'
+      - sh: 'test -f {{ printf "%s/configs.Dockerfile" .CATALOG_DIR | shellQuote }}'
         msg: "CATALOG_DIR '{{ .CATALOG_DIR }}' does not contain configs.Dockerfile"
     cmds:
       - >
         docker buildx build
         --builder {{ .DOCKER_BUILDER }}
-        --platform {{ .PLATFORMS }}
-        --tag {{ .CATALOG_IMAGE }}
-        -f {{ .CATALOG_DIR }}/configs.Dockerfile
+        --platform {{ .PLATFORMS | shellQuote }}
+        --tag {{ .CATALOG_IMAGE | shellQuote }}
+        -f {{ printf "%s/configs.Dockerfile" .CATALOG_DIR | shellQuote }}
         --push
-        {{ .CATALOG_DIR }}
+        {{ .CATALOG_DIR | shellQuote }}
 
   catalog:install:
     desc: Install the operator through OLM from a catalog image
