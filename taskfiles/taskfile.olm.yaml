@@ -535,6 +535,16 @@ tasks:
 
   catalog:generate:
     desc: Generate an ephemeral OLM catalog containing only the bundle
+    summary: |
+      Renders a file-based catalog containing only the given bundle,
+      in the major-version channel of the Stable channel archetype
+      (e.g. "stable-v1").
+      The catalog is validated ad then exported together with its
+      configs.Dockerfile as a single directory.
+
+      Configurable vars:
+        BUNDLE_IMAGE     Required. The bundle image to add to the catalog.
+        OUTPUT_DIR       Required. Directory the catalog is exported to.
     deps:
       - infra:setup-dagger-engine
     vars:
@@ -572,6 +582,16 @@ tasks:
 
   catalog:image:
     desc: Build the OLM catalog image
+    summary: |
+      Builds the OLM catalog image starting from a catalog directory and pushes it.
+
+      Configurable vars:
+        CATALOG_IMAGE        Required. Full reference (registry, repository
+                              and tag) of the catalog image.
+        CATALOG_DIR          Required. Directory holding the generated
+                              catalog and configs.Dockerfile.
+        PLATFORMS            Comma-separated buildx target platforms.
+                              Default: "linux/amd64,linux/arm64".
     deps:
       - infra:setup-docker-builder
     vars:
