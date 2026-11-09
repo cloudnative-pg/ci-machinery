@@ -297,11 +297,13 @@ tasks:
         vars:
           BUNDLE_IMAGE: '{{ .BUNDLE_IMAGE }}'
           OUTPUT_DIR: '{{ .CATALOG_DIR }}'
+          WORKDIR: '{{ .WORKDIR }}'
       - task: catalog:image
         vars:
           CATALOG_IMAGE: '{{ .CATALOG_IMAGE }}'
           CATALOG_DIR: '{{ .CATALOG_DIR }}'
           PLATFORMS: '{{ .PLATFORMS }}'
+          WORKDIR: '{{ .WORKDIR }}'
       - task: catalog:install
         vars:
           CATALOG_IMAGE: '{{ .CATALOG_IMAGE }}'
@@ -545,6 +547,8 @@ tasks:
       Configurable vars:
         BUNDLE_IMAGE     Required. The bundle image to add to the catalog.
         OUTPUT_DIR       Required. Directory the catalog is exported to.
+        WORKDIR          Directory where the task is executed.
+                          Default: {{ .USER_WORKING_DIR }}
     deps:
       - infra:setup-dagger-engine
     vars:
@@ -562,6 +566,7 @@ tasks:
       vars:
         - name: BUNDLE_IMAGE
         - name: OUTPUT_DIR
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     run: when_changed
     cmds:
       - >
@@ -592,6 +597,8 @@ tasks:
                               catalog and configs.Dockerfile.
         PLATFORMS            Comma-separated buildx target platforms.
                               Default: "linux/amd64,linux/arm64".
+        WORKDIR              Directory where the task is executed.
+                              Default: {{ .USER_WORKING_DIR }}
     deps:
       - infra:setup-docker-builder
     vars:
@@ -600,6 +607,7 @@ tasks:
       vars:
         - name: CATALOG_IMAGE
         - name: CATALOG_DIR
+    dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     run: when_changed
     preconditions:
       - sh: 'test -f "{{ .CATALOG_DIR }}/configs.Dockerfile"'
