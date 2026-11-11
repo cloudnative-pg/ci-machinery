@@ -754,6 +754,8 @@ tasks:
                                   (major.minor.patch), a release
                                   candidate (major.minor.patch-rcN) or a
                                   development build (major.minor.patch-devN).
+        CI_YAML                  Path to the local ci.yaml. When set the file
+                                  is copied to `{{ .OPERATOR_DIR }}/ci.yaml`.
         BUNDLE_DIR               Directory containing the bundle
                                   `manifests/` and `metadata/` directories.
                                   Default: "olm-bundle/bundle"
@@ -766,6 +768,7 @@ tasks:
       COMMUNITY_OPERATORS_PATH: '{{ .COMMUNITY_OPERATORS_PATH | default "community-operators" }}'
       OPERATOR_DIR: '{{ .COMMUNITY_OPERATORS_PATH }}/operators/{{ .OPERATOR_NAME }}'
       VERSION_DIR: '{{ .OPERATOR_DIR }}/{{ .VERSION }}'
+      CI_YAML: '{{ .CI_YAML | default "" }}'
     requires:
       vars:
         - name: OPERATOR_NAME
@@ -774,14 +777,18 @@ tasks:
     preconditions:
       - sh: 'echo {{ .VERSION | shellQuote }} | grep -Eq {{ .VERSION_REGEX | shellQuote }}'
         msg: "VERSION '{{ .VERSION }}' must be a release (major.minor.patch), a release candidate (major.minor.patch-rcN) or a development build (major.minor.patch-devN)"
-      - sh: 'test -d "{{ .COMMUNITY_OPERATORS_PATH }}/operators"'
+      - sh: 'test -d {{ printf "%s/operators" .COMMUNITY_OPERATORS_PATH | shellQuote }}'
         msg: "COMMUNITY_OPERATORS_PATH '{{ .COMMUNITY_OPERATORS_PATH }}' is not a community-operators checkout (no operators/ directory)"
       - sh: 'test -d {{ printf "%s/manifests" .BUNDLE_DIR | shellQuote }} && test -d {{ printf "%s/metadata" .BUNDLE_DIR | shellQuote }}'
         msg: "BUNDLE_DIR '{{ .BUNDLE_DIR }}' must contain the manifests/ and metadata/ directories"
       - sh: '! test -e {{ .VERSION_DIR | shellQuote }}'
         msg: "Version directory '{{ .VERSION_DIR }}' already exists"
+      - sh: '{{ with .CI_YAML }}test -f {{ . | shellQuote }}{{ end }}'
+        msg: "The CI_YAML '{{ .CI_YAML }}' is not a regular file."
     cmds:
       - mkdir -p {{ .VERSION_DIR | shellQuote }}
+      - cmd: cp {{ .CI_YAML | shellQuote }} {{ printf "%s/ci.yaml" .OPERATOR_DIR | shellQuote }}
+        if: 'test -n {{ .CI_YAML | shellQuote }}'
       - cp -R {{ printf "%s/manifests" .BUNDLE_DIR | shellQuote }} {{ printf "%s/metadata" .BUNDLE_DIR | shellQuote }} {{ .VERSION_DIR | shellQuote }}
 
   operator-hub:pull-request:
