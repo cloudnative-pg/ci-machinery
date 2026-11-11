@@ -783,11 +783,12 @@ tasks:
         msg: "BUNDLE_DIR '{{ .BUNDLE_DIR }}' must contain the manifests/ and metadata/ directories"
       - sh: '! test -e {{ .VERSION_DIR | shellQuote }}'
         msg: "Version directory '{{ .VERSION_DIR }}' already exists"
-      - sh: 'test -z {{ .CI_YAML | shellQuote }} || test -f {{ .CI_YAML | shellQuote }}'
+      - sh: '{{ with .CI_YAML }}test -f {{ . | shellQuote }}{{ end }}'
         msg: "The CI_YAML '{{ .CI_YAML }}' is not a regular file."
     cmds:
       - mkdir -p {{ .VERSION_DIR | shellQuote }}
-      - '{{ if .CI_YAML }}cp {{ .CI_YAML | shellQuote }} {{ printf "%s/ci.yaml" .OPERATOR_DIR | shellQuote }}{{ end }}'
+      - cmd: cp {{ .CI_YAML | shellQuote }} {{ printf "%s/ci.yaml" .OPERATOR_DIR | shellQuote }}
+        if: 'test -n {{ .CI_YAML | shellQuote }}'
       - cp -R {{ printf "%s/manifests" .BUNDLE_DIR | shellQuote }} {{ printf "%s/metadata" .BUNDLE_DIR | shellQuote }} {{ .VERSION_DIR | shellQuote }}
 
   operator-hub:pull-request:
