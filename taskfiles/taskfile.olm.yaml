@@ -756,6 +756,13 @@ tasks:
                                   development build (major.minor.patch-devN).
         CI_YAML                  Path to the local ci.yaml. When set the file
                                   is copied to `{{ .OPERATOR_DIR }}/ci.yaml`.
+        SET_REPLACES             When "true", sets `spec.replaces` in the
+                                  copied CSV to the highest released version
+                                  (major.minor.patch) lower than VERSION
+                                  found in the checkout. Required by
+                                  `updateGraph: replaces-mode`. If there is
+                                  no previous version, the field is left
+                                  unset. Default: "false"
         BUNDLE_DIR               Directory containing the bundle
                                   `manifests/` and `metadata/` directories.
                                   Default: "olm-bundle/bundle"
@@ -769,10 +776,17 @@ tasks:
       OPERATOR_DIR: '{{ .COMMUNITY_OPERATORS_PATH }}/operators/{{ .OPERATOR_NAME }}'
       VERSION_DIR: '{{ .OPERATOR_DIR }}/{{ .VERSION }}'
       CI_YAML: '{{ .CI_YAML | default "" }}'
+      SET_REPLACES: '{{ .SET_REPLACES | default "false" }}'
+      BASE_VERSION: '{{ .VERSION | splitList "-" | first }}'
+      # A dev build is made after the tag of its base version (see GIT_TAG_VERSION),
+      # so the base version itself can be replaced by it.
+      INCLUDE_BASE: '{{ if regexMatch "-dev[0-9]+$" .VERSION }}1{{ else }}0{{ end }}'
     requires:
       vars:
         - name: OPERATOR_NAME
         - name: VERSION
+        - name: SET_REPLACES
+          enum: ["true", "false"]
     dir: '{{ .WORKDIR | default .USER_WORKING_DIR }}'
     preconditions:
       - sh: 'echo {{ .VERSION | shellQuote }} | grep -Eq {{ .VERSION_REGEX | shellQuote }}'
@@ -790,6 +804,26 @@ tasks:
       - cmd: cp {{ .CI_YAML | shellQuote }} {{ printf "%s/ci.yaml" .OPERATOR_DIR | shellQuote }}
         if: 'test -n {{ .CI_YAML | shellQuote }}'
       - cp -R {{ printf "%s/manifests" .BUNDLE_DIR | shellQuote }} {{ printf "%s/metadata" .BUNDLE_DIR | shellQuote }} {{ .VERSION_DIR | shellQuote }}
+      - cmd: |
+          set -eu
+          # Highest released version lower than the one being added (for dev
+          # builds, lower than or equal to its base version)
+          inc={{ .INCLUDE_BASE }}
+          test -d {{ printf "%s/%s" .OPERATOR_DIR .BASE_VERSION | shellQuote }} || inc=0
+          previous="$(
+            { ls -1 {{ .OPERATOR_DIR | shellQuote }} | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true
+              echo {{ .BASE_VERSION | shellQuote }}; } |
+              sort -Vu | awk -v b={{ .BASE_VERSION | shellQuote }} -v inc="$inc" '$0 == b { if (inc) p = $0; exit } { p = $0 } END { print p }'
+          )"
+          if [ -z "$previous" ]; then
+            echo "No previous version found for {{ .OPERATOR_NAME }}: spec.replaces not set"
+            exit 0
+          fi
+          csv={{ printf "%s/manifests/%s.clusterserviceversion.yaml" .VERSION_DIR .OPERATOR_NAME | shellQuote }}
+          sed -i -e '/^  replaces:/d' -e "s/^spec:.*/&\n  replaces: {{ .OPERATOR_NAME }}.v${previous}/" "$csv"
+          grep -q "^  replaces: " "$csv" || { echo "spec: not found in '$csv'" >&2; exit 1; }
+          echo "Set spec.replaces to {{ .OPERATOR_NAME }}.v${previous}"
+        if: 'test {{ .SET_REPLACES | shellQuote }} = true'
 
   operator-hub:pull-request:
     desc: Open a pull request for a new operator version on community-operators
@@ -898,6 +932,9 @@ tasks:
         BUNDLE_DIR     Directory containing the bundle `manifests/` and
                         `metadata/` directories.
                         Default: "olm-bundle/bundle"
+        CI_YAML        Path to the local ci.yaml, see `operator-hub:add`.
+        SET_REPLACES   Set `spec.replaces` in the CSV, see
+                        `operator-hub:add`. Default: "false"
         WORKDIR        Directory where the task is executed.
                         Default: {{ .USER_WORKING_DIR }}
     vars:
@@ -929,6 +966,8 @@ tasks:
           VERSION: '{{ .VERSION }}'
           BUNDLE_DIR: '{{ .BUNDLE_DIR }}'
           COMMUNITY_OPERATORS_PATH: '{{ .COMMUNITY_OPERATORS_PATH }}'
+          CI_YAML: '{{ .CI_YAML }}'
+          SET_REPLACES: '{{ .SET_REPLACES }}'
           WORKDIR: '{{ .WORKDIR }}'
       - task: bundle:fruit-tests
         vars:
