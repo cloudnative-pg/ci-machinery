@@ -12,7 +12,7 @@ vars:
   # renovate: datasource=docker depName=quay.io/operator-framework/opm versioning=docker
   OPM_IMAGE_VERSION: v1.74.0@sha256:b32d3891616662620da08d7f0ec42c2e69fa2de43427dc975d35b12f7a969a0f
   # renovate: datasource=docker depName=alpine/kubectl versioning=docker
-  KUBECTL_VERSION: 1.37.2@sha256:1a7fc3308a8eee1c8bd177930fc521088c6dc64ad8b68c88319151fd87d79deb
+  KUBECTL_VERSION: 1.37.2@sha256:02791a008d526a0b2ca9edc9692d86933b4a164e64d1c012eb46e30fca18d818
   # renovate: datasource=git-refs depName=https://github.com/redhat-openshift-ecosystem/community-operators-pipeline.git versioning=git currentValue=ci/latest
   OPP_SCRIPT_SHA: "06c8c50c3e7f60e155595ccc66764aa526e674fc"
   REGISTRY_CA_VOLUME: '{{ .REGISTRY_CA_VOLUME | default "cnpg-registry-tls" }}'
