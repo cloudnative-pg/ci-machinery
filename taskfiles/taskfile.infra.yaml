@@ -21,7 +21,7 @@ vars:
   # renovate: datasource=docker depName=alpine/kubectl versioning=docker
   KUBECTL_IMAGE: alpine/kubectl:1.37.1@sha256:8c72f6f732ce7ef11cdb1bea25faa4f4a521872a12c89e3f40ba9edb52a4d4f2
   # renovate: datasource=github-tags depName=cloudnative-pg/cloudnative-pg versioning=semver-coerced extractVersion=^v(?<version>\d+\.\d+\.\d+)$
-  CNPG_RELEASE_DEFAULT: 1.30.1
+  CNPG_RELEASE_DEFAULT: 1.30.2
   # Prints the URL of the CloudNativePG manifest for the release
   CNPG_MANIFEST_SCRIPT: |
     input="${release}"
@@ -149,7 +149,7 @@ tasks:
       - setup-docker-network
     vars:
       # renovate: datasource=github-tags depName=dagger/dagger versioning=semver
-      DAGGER_ENGINE_VERSION: v0.21.11
+      DAGGER_ENGINE_VERSION: v0.21.12
     cmds:
       - >
         docker run -d -v /var/lib/dagger
