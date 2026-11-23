@@ -79,7 +79,7 @@ tasks:
       METADATA_DIR: '{{ .METADATA_DIR | default "" }}'
       OUTPUT_DIR: '{{ .OUTPUT_DIR | default "olm-bundle" }}'
       GIT_TAG_VERSION:
-        sh: (set -o pipefail && git describe --tags --match 'v*' | sed -e 's/^v//; s/-g[0-9a-f]\+$//; s/-\([0-9]\+\)$/-dev\1/') 2>/dev/null || true
+        sh: git describe --tags --match 'v*' 2>/dev/null | sed -e 's/^v//; s/-g[0-9a-f]\+$//; s/-\([0-9]\+\)$/-dev\1/'
       VERSION: '{{ .VERSION | default .GIT_TAG_VERSION }}'
       VERSION_ARG: '{{ if .VERSION }}--version={{ .VERSION | shellQuote }}{{ end }}'
     env:
